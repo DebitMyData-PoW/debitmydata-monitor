@@ -22,7 +22,7 @@
 <meta property="og:image" content="https://stats.debitmydata.io/images/app/icon-512.png?v=1">
 <meta property="og:url" content="https://stats.debitmydata.io/">
 <link rel="preload" href="/fonts/mada-latin-800-normal.woff2" as="font" type="font/woff2" crossorigin>
-<link rel="stylesheet" href="/css/stats.css?v=3">
+<link rel="stylesheet" href="/css/stats.css?v=4">
 </head>
 <body class="dmd" id="top">
 <header class="dmd-topbar"><div class="dmd-in">
@@ -116,8 +116,17 @@
 <div class="dmd-chart-empty" id="dmd-chart-empty" hidden></div>
 </div>
 <div class="dmd-zoom">
-<div class="dmd-zoom-bar" id="dmd-zoom" aria-label="Zoom: drag the handles, or the window between them"></div>
-<button type="button" class="dmd-zoom-reset" id="dmd-zoom-reset" hidden>Show all</button>
+<div class="dmd-zoom-area">
+<div class="dmd-zoom-bar" id="dmd-zoom" aria-hidden="true"></div>
+<div class="dmd-zoom-track" id="dmd-zoom-track">
+<div class="dmd-zoom-shade" id="dmd-zoom-shade-l"></div><div class="dmd-zoom-shade" id="dmd-zoom-shade-r"></div>
+<div class="dmd-zoom-window" id="dmd-zoom-window" tabindex="0" role="slider" aria-label="Zoom window: drag it, or arrow keys" aria-valuetext="all">
+<span class="dmd-zoom-grip" data-grip="min" tabindex="0" role="slider" aria-label="Start of the zoom: drag it, or arrow keys"></span>
+<span class="dmd-zoom-grip" data-grip="max" tabindex="0" role="slider" aria-label="End of the zoom: drag it, or arrow keys"></span>
+</div>
+</div>
+</div>
+<div class="dmd-zoom-foot"><span class="dmd-zoom-hint">Drag the window or its handles to zoom in and out</span><button type="button" class="dmd-zoom-reset" id="dmd-zoom-reset" hidden>Show all</button></div>
 </div>
 <p class="dmd-chart-note" id="dmd-chart-note"></p>
 </section>
@@ -244,7 +253,7 @@
 </div></div></dialog>
 
 <script src="/vendor/apexcharts-3.54.1.min.js"></script>
-<script src="/js/app.js?v=2"></script>
+<script src="/js/app.js?v=3"></script>
 <script src="/js/notify.js?v=2"></script>
 <script src="/js/install.js?v=1"></script>
 </body>

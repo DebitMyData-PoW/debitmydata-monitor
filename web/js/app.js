@@ -1,7 +1,8 @@
 // DMD Stats: the figures and the charts, from the files the monitoring server writes every minute
 // (/api/summary.json, /api/chart-<range>.json, /api/miners.json). Nothing here sends anything.
-// The chart: a metric, a period, lines or candles, and the zoom bar under it (drag its handles,
-// or the window between them); the choices are kept in this browser.
+// The chart: a metric, a period, lines or candles, and the zoom bar under it (drag its window, or
+// the handles at its ends, with a mouse or a finger; arrow keys too); the choices are kept in this
+// browser.
 (function () {
   "use strict";
   var root = document.documentElement;
@@ -316,11 +317,7 @@
 
   // ------------------------------------------------------------------ drawing
   function destroy() {
-    if (brush) {
-      // a drag's last step waits a moment in the chart library: not for a chart that is gone
-      try { clearTimeout(brush.w.globals.selectionResizeTimer); } catch (e) {}
-      brush.destroy(); brush = null;
-    }
+    if (brush) { brush.destroy(); brush = null; }
     if (main) { main.destroy(); main = null; }
   }
 
@@ -408,44 +405,40 @@
     current = { def: def, series: series, min: fullMin, max: fullMax };
     main = new ApexCharts($("dmd-chart"), options);
     main.render();
-    drawBrush(def, c, series, zoom);
+    drawBrush(def, c, series);
     $("dmd-zoom-reset").hidden = !zoom;
   }
 
-  // The zoom bar: the whole period, small, with a window to drag or stretch (like CoinMarketCap's)
+  // The zoom bar: the whole period small, under a window to drag or stretch (like CoinMarketCap's).
+  // The small chart only shows the period; the window and its handles are the page's own, moved
+  // with pointer events, so a mouse and a finger work the same.
   function brushLine(series) {
     var s = series[0];
     return s.data.map(function (p) { return Array.isArray(p) ? p : [p.x, Array.isArray(p.y) ? p.y[3] : p.y]; });
   }
   var pending = null;
-  function drawBrush(def, c, series, zoom) {
+  function drawBrush(def, c, series) {
     if (current.min === undefined) return;
-    var points = brushLine(series);
     brush = new ApexCharts($("dmd-zoom"), {
-      chart: { id: "dmd-zoom-bar", type: "area", height: 64, foreColor: c.fore, fontFamily: "Mada, system-ui, sans-serif",
-        background: "transparent", animations: { enabled: false }, sparkline: { enabled: false },
-        brush: { enabled: true, target: "dmd-main", autoScaleYaxis: false },
-        selection: { enabled: true, fill: { color: c.red, opacity: 0.08 }, stroke: { color: c.red, width: 1, opacity: 0.6 },
-          xaxis: { min: zoom ? zoom.min : current.min, max: zoom ? zoom.max : current.max } },
-        events: { selection: function (ctx, range) { zoomTo(range.xaxis.min, range.xaxis.max); } } },
-      series: [{ name: series[0].name, data: points }],
+      chart: { type: "area", height: window.innerWidth < 760 ? 76 : 64, sparkline: { enabled: true },
+        background: "transparent", animations: { enabled: false } },
+      series: [{ name: series[0].name, data: brushLine(series) }],
       colors: [def.colours(c)[0]],
-      stroke: { width: 1.2, curve: "smooth" },
+      stroke: { width: 1.5, curve: "smooth" },
       fill: { type: "gradient", gradient: { opacityFrom: 0.3, opacityTo: 0.02 } },
-      dataLabels: { enabled: false },
-      grid: { show: false, padding: { left: 8, right: 12, top: 0, bottom: 0 } },
-      legend: { show: false },
       tooltip: { enabled: false },
-      xaxis: { type: "datetime", labels: { show: false }, axisBorder: { show: false }, axisTicks: { show: false }, tooltip: { enabled: false } },
-      yaxis: { show: false, labels: { minWidth: 40 }, min: series[0].type === "bar" ? 0 : undefined }
+      xaxis: { type: "datetime", min: current.min, max: current.max },
+      yaxis: { min: series[0].type === "bar" ? 0 : undefined }
     });
     brush.render();
+    placeWindow();
   }
   function zoomTo(min, max) {
     if (!current || !main) return;
     var whole = max - min >= (current.max - current.min) * 0.995;
     state.zoom = whole ? null : { min: min, max: max };
     $("dmd-zoom-reset").hidden = !state.zoom;
+    placeWindow();
     if (pending) return;
     pending = window.requestAnimationFrame(function () {
       pending = null;
@@ -455,6 +448,77 @@
         yaxis: yaxisFor(current.def, current.series, z ? z.min : undefined, z ? z.max : undefined) }, false, false, false);
     });
   }
+
+  var track = $("dmd-zoom-track"), win = $("dmd-zoom-window"), drag = null;
+  function span() { return current.max - current.min; }
+  function shown() { return state.zoom || { min: current.min, max: current.max }; }
+  function placeWindow() {
+    if (!current || current.min === undefined || !(span() > 0)) return;
+    var z = shown();
+    var a = Math.max(0, (z.min - current.min) / span()), b = Math.min(1, (z.max - current.min) / span());
+    win.style.left = a * 100 + "%";
+    win.style.width = Math.max(0, b - a) * 100 + "%";
+    $("dmd-zoom-shade-l").style.width = a * 100 + "%";
+    $("dmd-zoom-shade-r").style.left = b * 100 + "%";
+    $("dmd-zoom-shade-r").style.width = (1 - b) * 100 + "%";
+    var when = tooltipDate();
+    win.setAttribute("aria-valuetext", state.zoom ? new Date(z.min).toLocaleString([], when) + " to " + new Date(z.max).toLocaleString([], when) : "the whole period");
+  }
+  // a window of 3% of the period at least, inside the period
+  function setRange(min, max, keepWidth) {
+    var least = span() * 0.03;
+    if (keepWidth) {
+      var width = Math.min(max - min, span());
+      min = Math.max(current.min, Math.min(min, current.max - width));
+      max = min + width;
+    } else {
+      min = Math.max(current.min, min);
+      max = Math.min(current.max, max);
+      if (max - min < least) {
+        if (drag && drag.mode === "min") min = max - least; else max = min + least;
+      }
+    }
+    zoomTo(min, max);
+  }
+  function timeAt(clientX) {
+    var r = track.getBoundingClientRect();
+    return current.min + Math.max(0, Math.min(1, (clientX - r.left) / r.width)) * span();
+  }
+  track.addEventListener("pointerdown", function (e) {
+    if (!current || !main || (e.pointerType === "mouse" && e.button !== 0)) return;
+    var grip = e.target.closest("[data-grip]"), z = shown(), mode = grip ? grip.getAttribute("data-grip") : "move";
+    if (!grip && !win.contains(e.target)) {
+      // outside the window: the window goes there (a quarter of the period when nothing is zoomed)
+      var width = state.zoom ? z.max - z.min : span() / 4, t = timeAt(e.clientX);
+      setRange(t - width / 2, t + width / 2, true);
+      z = shown();
+    }
+    drag = { mode: mode, x: e.clientX, min: z.min, max: z.max, width: track.getBoundingClientRect().width };
+    try { track.setPointerCapture(e.pointerId); } catch (err) {}
+    e.preventDefault();
+  });
+  track.addEventListener("pointermove", function (e) {
+    if (!drag) return;
+    var dt = (e.clientX - drag.x) / drag.width * span();
+    if (drag.mode === "move") setRange(drag.min + dt, drag.max + dt, true);
+    else if (drag.mode === "min") setRange(Math.min(drag.min + dt, drag.max), drag.max);
+    else setRange(drag.min, Math.max(drag.max + dt, drag.min));
+  });
+  function stop() { drag = null; }
+  track.addEventListener("pointerup", stop);
+  track.addEventListener("pointercancel", stop);
+  track.addEventListener("lostpointercapture", stop);
+  track.addEventListener("dblclick", function () { state.zoom = null; draw(); });
+  // the keyboard: the window or a handle, by 5% of the period (1% with Shift)
+  track.addEventListener("keydown", function (e) {
+    if (!current || (e.key !== "ArrowLeft" && e.key !== "ArrowRight")) return;
+    var grip = e.target.closest("[data-grip]"), z = shown();
+    var dt = (e.key === "ArrowLeft" ? -1 : 1) * span() * (e.shiftKey ? 0.01 : 0.05);
+    if (!grip) setRange(z.min + dt, z.max + dt, true);
+    else if (grip.getAttribute("data-grip") === "min") setRange(Math.min(z.min + dt, z.max), z.max);
+    else setRange(z.min, Math.max(z.max + dt, z.min));
+    e.preventDefault();
+  });
   $("dmd-zoom-reset").addEventListener("click", function () { state.zoom = null; draw(); });
 
   function loadChart(range) {
