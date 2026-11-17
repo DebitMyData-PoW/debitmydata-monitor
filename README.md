@@ -1,6 +1,16 @@
 # DebitMyData monitor
 
-The monitoring server of the DebitMyData Proof-of-Work chain, on one Ubuntu 24.04 server:
+The monitoring server of the DebitMyData Proof-of-Work chain, and its public page
+**[stats.debitmydata.io](https://stats.debitmydata.io)**.
+
+<p align="center">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/stats-devices-dark.webp">
+  <img src="docs/images/stats-devices-light.webp" alt="DMD Stats on a laptop and as the app on a phone" width="820">
+</picture>
+</p>
+
+On one Ubuntu 24.04 server:
 
 - **The chain watch** (`chainwatch/`): keeps every block since block 1 in its database, works out
   the hashrate, the volume, every address's balance (its own rich list) and the mining cost of DMD
