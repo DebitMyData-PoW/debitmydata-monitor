@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # The watcher's watcher: the chain watch sends every alert, so when it stops, nothing would say
 # so. Every 5 minutes (dmd-watchdog.timer) this checks that it runs and that its figures are
-# fresh; if not, it posts to the private Discord channel (DMDW_DISCORD_WEBHOOK), at most every
-# 2 hours, and once more when it runs again.
+# fresh, and that the notifications service runs; if not, it posts to the private Discord
+# channel (DMDW_DISCORD_WEBHOOK), at most every 2 hours, and once more when it runs again.
 set -u
 FIGURES=/var/lib/debitmydata-monitor/metrics/chainwatch.prom
 STATE=/var/lib/debitmydata-monitor/watchdog.state
@@ -21,6 +21,13 @@ else
         problem="Its figures are $(( age / 60 )) minutes old: it is stuck (journalctl -u dmd-chainwatch -n 50)."
     fi
 fi
+title="The DebitMyData chain watch is not working"
+fix="No other alert can be sent until it runs again. On the monitoring server: sudo systemctl restart dmd-chainwatch"
+if [ -z "$problem" ] && [ -f /etc/systemd/system/dmd-notify.service ] && ! systemctl is-active --quiet dmd-notify; then
+    title="The stats page's notifications are not working"
+    problem="The notifications service is not running (systemctl status dmd-notify, journalctl -u dmd-notify -n 50)."
+    fix="The stats page's notifications are not sent; the team's alerts still are. On the monitoring server: sudo systemctl restart dmd-notify"
+fi
 
 last_sent=0
 [ -f "$STATE" ] && last_sent=$(cat "$STATE" 2>/dev/null || echo 0)
@@ -38,12 +45,11 @@ post() {
 
 if [ -n "$problem" ]; then
     if [ $(( now - last_sent )) -ge "$REPEAT" ] || [ "$last_sent" -le 0 ]; then
-        post "[CRITICAL] The DebitMyData chain watch is not working" \
-            "$problem No other alert can be sent until it runs again. On the monitoring server: sudo systemctl restart dmd-chainwatch" \
-            13109269 && echo "$now" >"$STATE"
+        post "[CRITICAL] $title" "$problem $fix" 13109269 && echo "$now" >"$STATE"
     fi
 elif [ "$last_sent" -gt 0 ]; then
-    post "Resolved: the DebitMyData chain watch is running again" "Its alerts are sent again." 623953 &&
+    post "Resolved: the DebitMyData monitor's services are running again" \
+        "The chain watch and the notifications service run: alerts and notifications are sent again." 623953 &&
         echo 0 >"$STATE"
 fi
 exit 0

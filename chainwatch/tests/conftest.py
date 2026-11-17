@@ -30,6 +30,25 @@ def coinbase_hex(height: int, tag: str = "Official") -> str:
     return height.to_bytes(4, "little").hex() + "0a1b" + tag.encode().hex()
 
 
+def spend(
+    txid: str, ins: Sequence[tuple[str, str]], outs: Sequence[tuple[str, str]]
+) -> dict[str, Any]:
+    """A transaction as getblock (verbosity 3) gives it: what it spends (address, DMD) and what
+    it pays (address, DMD)."""
+    return {
+        "txid": txid,
+        "vin": [
+            {
+                "txid": "00" * 32,
+                "vout": 0,
+                "prevout": {"value": Decimal(v), "scriptPubKey": {"address": a}},
+            }
+            for a, v in ins
+        ],
+        "vout": [{"value": Decimal(v), "scriptPubKey": {"address": a}} for a, v in outs],
+    }
+
+
 class FakeNode:
     """A chain of blocks, every 150 seconds, at a constant difficulty unless told otherwise."""
 
@@ -54,6 +73,7 @@ class FakeNode:
         payouts: dict[str, Decimal] | None = None,
         salt: str = "main",
         start_time: int | None = None,
+        txs: Sequence[dict[str, Any]] = (),
     ) -> None:
         for _ in range(count):
             height = len(self.blocks)
@@ -80,11 +100,19 @@ class FakeNode:
                     "mediantime": when,
                     "difficulty": Decimal(str(difficulty)),
                     "chainwork": format(work, "064x"),
-                    "nTx": 1,
+                    "nTx": 1 + len(txs),
                     "size": 250,
-                    "tx": [{"vin": [{"coinbase": coinbase_hex(height, tag)}], "vout": vout}],
+                    "tx": [
+                        {
+                            "txid": self._hash(height, salt + "cb"),
+                            "vin": [{"coinbase": coinbase_hex(height, tag)}],
+                            "vout": vout,
+                        },
+                        *txs,
+                    ],
                 }
             )
+            txs = ()  # only in the first block added
 
     def replace_from(self, height: int, count: int, **kwargs: Any) -> list[str]:
         """A reorganization: blocks from ``height`` replaced by ``count`` others."""
@@ -107,6 +135,8 @@ class FakeNode:
             from chainwatch.rpc import RpcUnavailable
 
             raise RpcUnavailable("connection refused")
+        if method == "validateaddress":
+            return {"isvalid": str(params[0]).startswith("dm1q")}
         tip = self.blocks[-1]
         by_hash = self._index()
         if method == "getblockcount":
@@ -119,7 +149,21 @@ class FakeNode:
                 raise RpcError("Block height out of range")
             return self.blocks[height]["hash"]
         if method == "getblock":
-            return by_hash[params[0]]
+            block = by_hash[params[0]]
+            if len(params) > 1 and params[1] == 2:  # without what the transactions spend
+                return {
+                    **block,
+                    "tx": [
+                        {
+                            **tx,
+                            "vin": [
+                                {k: v for k, v in i.items() if k != "prevout"} for i in tx["vin"]
+                            ],
+                        }
+                        for tx in block["tx"]
+                    ],
+                }
+            return block
         if method == "getblockheader":
             return {k: v for k, v in by_hash[params[0]].items() if k != "tx"}
         if method == "getblockchaininfo":
@@ -150,7 +194,10 @@ def conn() -> Iterator[psycopg.Connection[Any]]:
         connection = db.connect(DATABASE_URL)
     except psycopg.OperationalError:
         pytest.skip("no test database (TEST_DATABASE_URL)")
-    connection.execute("DROP TABLE IF EXISTS blocks, reorgs, prices, alerts, state CASCADE")
+    connection.execute(
+        "DROP TABLE IF EXISTS blocks, reorgs, prices, alerts, state, transfers, address_moves, "
+        "balances, events, push_devices, market CASCADE"
+    )
     db.create_schema(connection)
     yield connection
     connection.close()

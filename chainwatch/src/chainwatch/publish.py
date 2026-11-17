@@ -1,17 +1,26 @@
 """The public stats page's files, and the numbers Prometheus reads.
 
 The stats page (stats.debitmydata.io) is static: nginx serves these files from the public folder,
-and Cloudflare caches them for a minute. Nothing on that site runs code on the server.
+and Cloudflare caches them for a minute. The page's API (stats.debitmydata.io/api/) explains them.
 
   api/summary.json            the latest figures, with their changes over a day
-  api/chart-<range>.json      the chart points of a range: 24h, 7d, 30d, 1y, all
-  api/miners.json             who found the last day's and week's blocks
+  api/chart-<range>.json      the chart points and candles of a range: 15m, 1h, 4h, 24h, 7d, 30d,
+                              1y, all (30d, 1y and all are written again every 10 minutes)
+  api/miners.json             who found the last day's, week's and month's blocks
+  api/transfers.json          the large transfers of the last week
+  api/richlist.json           the 100 addresses with the most DMD (the monitor's own count)
   api/dmd-daily.csv           one line per day since block 1 (for spreadsheets)
   api/dmd-blocks.csv          one line per block (rewritten once an hour)
 
 Hashrate is worked out from the blocks: the work they took (from the chain's total work) divided
-by the time they took, over a window that grows with the range (1 hour on the 24-hour chart, a
-day on the long ones), so one lucky block does not spike the chart. Difficulty is exact.
+by the time they took, over a window that grows with the range (1 hour up to the 24-hour chart, 6
+hours on 7 days, a day on the longer ones), so one lucky block does not spike the chart.
+Difficulty is exact. Volume is the DMD the blocks' transactions sent to other addresses (sync.py);
+the market cap is the reference price × the DMD mined so far.
+
+A chart's points are values at their time (the price, the difficulty, the hashrate over the window
+before it) and counts over the step before it (blocks, volume, transactions). Its candles cover a
+step each, from their time: open, high, low and close of the value over that step.
 """
 
 from __future__ import annotations
@@ -32,16 +41,37 @@ import psycopg
 
 from chainwatch import __version__, chain
 from chainwatch.checks import PUBLIC_POOL, miner_shares
+from chainwatch.sync import rich_list
 
 DAY = 86400
 RANGES = {
     # name: (span in seconds or None for everything, step, hashrate window)
+    "15m": (900, 30, 3600),
+    "1h": (3600, 60, 3600),
+    "4h": (4 * 3600, 300, 3600),
     "24h": (DAY, 600, 3600),
     "7d": (7 * DAY, 3600, 6 * 3600),
     "30d": (30 * DAY, 4 * 3600, DAY),
     "1y": (365 * DAY, DAY, DAY),
     "all": (None, DAY, DAY),
 }
+SLOW_RANGES = {"30d": 600, "1y": 600, "all": 600}  # seconds between two writes
+FIELDS = [
+    "time",
+    "price",
+    "mining_cost",
+    "difficulty",
+    "hashrate",
+    "block_seconds",
+    "blocks",
+    "volume",
+    "market_cap",
+    "transactions",
+    "trading_volume_24h",
+    "market_price",
+]
+MARKET_FRESH = 3600  # seconds: an exchange figure older than this is not shown as the current one
+CANDLES = ["price", "hashrate", "difficulty", "market_cap"]
 
 
 @dataclass
@@ -55,6 +85,9 @@ class Chain:
     work: list[int]
     cost: list[float]
     pool: list[bool]
+    volume: list[int]  # data; -1: not known yet
+    txs: list[int]  # transactions besides the coinbase
+    _sums: tuple[list[int], list[int], list[int]] | None = None
 
     def at(self, t: int) -> int:
         """Index of the last block found at or before t (-1: none)."""
@@ -69,13 +102,29 @@ class Chain:
     def blocks_between(self, start: int, end: int) -> int:
         return max(0, self.at(end) - self.at(start))
 
+    def sums(self, a: int, b: int) -> tuple[int | None, int]:
+        """Volume (None while some is not known) and transactions of blocks a+1 to b."""
+        if self._sums is None:
+            vol, unknown, txs = [0], [0], [0]
+            for v, n in zip(self.volume, self.txs, strict=True):
+                vol.append(vol[-1] + max(v, 0))
+                unknown.append(unknown[-1] + (1 if v < 0 else 0))
+                txs.append(txs[-1] + n)
+            self._sums = (vol, unknown, txs)
+        vol, unknown, txs = self._sums
+        a, b = a + 1, b + 1
+        if b <= a:
+            return 0, 0
+        return (None if unknown[b] - unknown[a] else vol[b] - vol[a]), txs[b] - txs[a]
+
 
 def load_chain(conn: psycopg.Connection[Any]) -> Chain:
-    heights, times, diff, work, cost, pool = [], [], [], [], [], []
+    heights, times, diff, work, cost, pool, volume, txs = [], [], [], [], [], [], [], []
     with conn.cursor() as cur:
         cur.execute(
             "SELECT height, extract(epoch FROM time)::bigint AS t, difficulty, "
-            "chainwork::text AS w, mining_cost_usd::float8 AS c, pool FROM blocks ORDER BY height"
+            "chainwork::text AS w, mining_cost_usd::float8 AS c, pool, "
+            "coalesce(volume_data, -1) AS v, tx_count FROM blocks ORDER BY height"
         )
         for r in cur:
             heights.append(r["height"])
@@ -84,11 +133,13 @@ def load_chain(conn: psycopg.Connection[Any]) -> Chain:
             work.append(int(r["w"]))
             cost.append(r["c"])
             pool.append(r["pool"])
+            volume.append(int(r["v"]))
+            txs.append(max(0, r["tx_count"] - 1))
     running, top = [], 0
     for t in times:
         top = max(top, t)
         running.append(top)
-    return Chain(heights, times, running, diff, work, cost, pool)
+    return Chain(heights, times, running, diff, work, cost, pool, volume, txs)
 
 
 @dataclass
@@ -100,6 +151,35 @@ class Prices:
     def at(self, t: int) -> float | None:
         i = bisect.bisect_right(self.times, t) - 1
         return self.values[i] if i >= 0 else None
+
+    def between(self, start: int, end: int) -> list[float]:
+        """The prices recorded after start, up to end."""
+        return self.values[
+            bisect.bisect_right(self.times, start) : bisect.bisect_right(self.times, end)
+        ]
+
+
+@dataclass
+class Market:
+    """The exchanges' figures (market.py): empty until DMD trades on one."""
+
+    times: list[int]
+    volume: list[float | None]
+    price: list[float | None]
+
+    def at(self, t: int) -> tuple[float | None, float | None]:
+        i = bisect.bisect_right(self.times, t) - 1
+        if i < 0 or t - self.times[i] > MARKET_FRESH:
+            return None, None
+        return self.volume[i], self.price[i]
+
+
+def load_market(conn: psycopg.Connection[Any]) -> Market:
+    rows = conn.execute(
+        "SELECT extract(epoch FROM observed_at)::bigint AS t, volume_24h_usd::float8 AS v, "
+        "price_usd::float8 AS p FROM market ORDER BY observed_at"
+    ).fetchall()
+    return Market([r["t"] for r in rows], [r["v"] for r in rows], [r["p"] for r in rows])
 
 
 def load_prices(conn: psycopg.Connection[Any]) -> Prices:
@@ -133,69 +213,112 @@ def _change(now: float | None, before: float | None) -> float | None:
     return round(now / before - 1, 4)
 
 
-def chart(c: Chain, p: Prices, name: str, now: int) -> dict[str, Any]:
+def _dmd(data: int | None) -> float | None:
+    return None if data is None else round(data / chain.DATA_PER_DMD, 8)
+
+
+def _candle(t: int, values: list[float | None]) -> list[float | None] | None:
+    """[time, open, high, low, close] from the values in order (the first is the open)."""
+    known = [v for v in values if v is not None]
+    if not known:
+        return None
+    return [t, _num(known[0], 8), _num(max(known), 8), _num(min(known), 8), _num(known[-1], 8)]
+
+
+def chart(c: Chain, p: Prices, name: str, now: int, m: Market | None = None) -> dict[str, Any]:
     span, step, window = RANGES[name]
     if not c.times:
         return {"range": name, "points": []}
     end = now - now % step
     first = c.sorted_times[0] if span is None else now - span
     start = max(first - first % step + step, c.sorted_times[0])
-    points = []
-    t = start
-    while t <= end:
-        i = c.at(t)
-        if i >= 0:
-            rate = c.hashrate(t, window)
-            count = c.blocks_between(t - window, t)
-            points.append(
-                [
-                    t,
-                    _num(p.at(t)),
-                    _num(c.cost[i]),
-                    _num(c.difficulty[i], 8),
-                    _num(rate),
-                    round(window / count, 1) if count else None,
-                    c.blocks_between(t - step, t),
-                ]
-            )
-        t += step
+    ticks = list(range(start, end + 1, step))
     # the last point is now, so the chart reaches the latest block
-    if points and points[-1][0] < now:
-        i = len(c.times) - 1
-        rate = c.hashrate(now, window)
-        count = c.blocks_between(now - window, now)
+    if not ticks or ticks[-1] < now:
+        ticks.append(now)
+    points: list[list[Any]] = []
+    candles: dict[str, list[list[float | None]]] = {k: [] for k in CANDLES}
+    previous = ticks[0] - step
+    for t in ticks:
+        i, before = c.at(t), c.at(previous)
+        if i < 0:
+            previous = t
+            continue
+        rate = c.hashrate(t, window)
+        count = c.blocks_between(t - window, t)
+        volume, transactions = c.sums(before, i)
+        price = p.at(t)
+        traded, market_price = m.at(t) if m else (None, None)
+        supply = chain.coins_mined_data(c.heights[i]) / chain.DATA_PER_DMD
         points.append(
             [
-                now,
-                _num(p.at(now)),
+                t,
+                _num(price),
                 _num(c.cost[i]),
                 _num(c.difficulty[i], 8),
                 _num(rate),
                 round(window / count, 1) if count else None,
-                c.blocks_between(now - step, now),
+                i - max(before, -1),
+                _dmd(volume),
+                _num(price * supply) if price is not None else None,
+                transactions,
+                _num(traded),
+                _num(market_price),
             ]
         )
+        # the candles of (previous, t], at previous
+        inside = range(max(before, 0) + (1 if before >= 0 else 0), i + 1)
+        diffs: list[float | None] = [
+            c.difficulty[max(before, 0)],
+            *(c.difficulty[k] for k in inside),
+        ]
+        moments = sorted(
+            {previous, t}
+            | {c.times[k] for k in inside if previous < c.times[k] <= t}
+            | {
+                c.times[k] + window
+                for k in range(max(0, c.at(previous - window)), max(0, c.at(t - window) + 1))
+                if previous < c.times[k] + window <= t
+            }
+        )
+        rates: list[float | None] = [c.hashrate(m, window) for m in moments]
+        prices: list[float | None] = [p.at(previous), *p.between(previous, t)]
+        if price is not None and (len(prices) < 2 or prices[-1] != price):
+            prices.append(price)
+        series: tuple[tuple[str, list[float | None]], ...] = (
+            ("price", prices),
+            ("hashrate", rates),
+            ("difficulty", diffs),
+            ("market_cap", [None if v is None else v * supply for v in prices]),
+        )
+        for key, values in series:
+            candle = _candle(previous, values)
+            if candle:
+                candles[key].append(candle)
+        previous = t
     return {
         "range": name,
         "step": step,
         "hashrate_window": window,
-        "fields": [
-            "time",
-            "price",
-            "mining_cost",
-            "difficulty",
-            "hashrate",
-            "block_seconds",
-            "blocks",
-        ],
+        "fields": FIELDS,
         "points": points,
+        "candle_fields": ["time", "open", "high", "low", "close"],
+        "candles": candles,
     }
 
 
 def summary(
-    conn: psycopg.Connection[Any], c: Chain, p: Prices, now: int, status: dict[str, Any]
+    conn: psycopg.Connection[Any],
+    c: Chain,
+    p: Prices,
+    now: int,
+    status: dict[str, Any],
+    m: Market | None = None,
+    market_source: str = "",
 ) -> dict[str, Any]:
     i = len(c.times) - 1
+    traded, market_price = m.at(now) if m else (None, None)
+    traded_day, _ = m.at(now - DAY) if m else (None, None)
     day_ago = c.at(now - DAY)
     height = c.heights[i]
     rate_1h = c.hashrate(now, 3600)
@@ -216,6 +339,15 @@ def summary(
             day += DAY
     pool_24h = sum(1 for k in range(max(0, c.at(now - DAY) + 1), i + 1) if c.pool[k])
     subsidy = chain.subsidy_data(height + 1)
+    volume_24h, transactions_24h = c.sums(c.at(now - DAY), i)
+    volume_prev, _ = c.sums(c.at(now - 2 * DAY), c.at(now - DAY))
+    mined = chain.coins_mined_data(height) / chain.DATA_PER_DMD
+    cap = float(latest["usd_per_dmd"]) * mined if latest else None
+    cap_day = (
+        price_day * chain.coins_mined_data(c.heights[day_ago]) / chain.DATA_PER_DMD
+        if price_day is not None and day_ago >= 0
+        else None
+    )
     return {
         "updated_at": datetime.fromtimestamp(now, UTC).isoformat(),
         "height": height,
@@ -246,9 +378,27 @@ def summary(
         }
         if latest
         else None,
+        "market_cap_usd": _num(cap),
+        "market_cap_change_24h": _change(cap, cap_day),
+        "volume_24h_dmd": _dmd(volume_24h),
+        "volume_change_24h": _change(
+            None if volume_24h is None else float(volume_24h),
+            None if volume_prev is None else float(volume_prev),
+        ),
+        "transactions_24h": transactions_24h,
         "block_reward_dmd": subsidy / chain.DATA_PER_DMD,
         "next_halving_height": (height // chain.HALVING_BLOCKS + 1) * chain.HALVING_BLOCKS,
-        "coins_mined_dmd": chain.coins_mined_data(height) / chain.DATA_PER_DMD,
+        "coins_mined_dmd": mined,
+        "market": {
+            "listed": bool(m and m.times),
+            "source": market_source or None,
+            "trading_volume_24h_usd": _num(traded),
+            "trading_volume_change_24h": _change(traded, traded_day),
+            "price_usd": _num(market_price),
+            "observed_at": datetime.fromtimestamp(m.times[-1], UTC).isoformat()
+            if m and m.times
+            else None,
+        },
         "status": status,
         "monitor": f"DebitMyData chain watch {__version__}",
     }
@@ -256,7 +406,7 @@ def summary(
 
 def miners(conn: psycopg.Connection[Any], now: datetime) -> dict[str, Any]:
     out = {}
-    for name, days in (("24h", 1), ("7d", 7)):
+    for name, days in (("24h", 1), ("7d", 7), ("30d", 30)):
         shares = miner_shares(conn, since=now - timedelta(days=days))
         total = shares["blocks"] or 1
         out[name] = {
@@ -284,6 +434,9 @@ def daily_csv(c: Chain, p: Prices, now: int) -> str:
             "mining_cost_usd_close",
             "reference_price_usd_close",
             "pool_blocks",
+            "volume_dmd",
+            "transactions",
+            "market_cap_usd_close",
         ]
     )
     if not c.times:
@@ -297,6 +450,8 @@ def daily_csv(c: Chain, p: Prices, now: int) -> str:
             rate = c.hashrate(end, DAY)
             pool_n = sum(1 for k in range(j + 1, i + 1) if c.pool[k])
             price = p.at(end)
+            volume, transactions = c.sums(j, i)
+            cap = chain.market_cap_usd(price, c.heights[i])
             w.writerow(
                 [
                     datetime.fromtimestamp(day, UTC).date().isoformat(),
@@ -309,6 +464,9 @@ def daily_csv(c: Chain, p: Prices, now: int) -> str:
                     f"{c.cost[i]:.15f}".rstrip("0").rstrip("."),
                     "" if price is None else f"{Decimal(str(price)):f}",
                     pool_n,
+                    "" if volume is None else f"{Decimal(volume) / chain.DATA_PER_DMD:f}",
+                    transactions,
+                    "" if cap is None else f"{cap:.2f}",
                 ]
             )
         day = end
@@ -329,12 +487,15 @@ def blocks_csv(conn: psycopg.Connection[Any]) -> str:
             "pool",
             "coinbase_text",
             "mining_cost_usd",
+            "miner",
+            "volume_dmd",
+            "fees_dmd",
         ]
     )
     with conn.cursor() as cur:
         cur.execute(
             "SELECT height, time, hash, difficulty, tx_count, size, pool, coinbase_tag, "
-            "mining_cost_usd FROM blocks ORDER BY height"
+            "mining_cost_usd, miner, volume_data, fees_data FROM blocks ORDER BY height"
         )
         for r in cur:
             w.writerow(
@@ -348,9 +509,62 @@ def blocks_csv(conn: psycopg.Connection[Any]) -> str:
                     1 if r["pool"] else 0,
                     r["coinbase_tag"],
                     format(r["mining_cost_usd"].normalize(), "f"),
+                    r["miner"] or "",
+                    ""
+                    if r["volume_data"] is None or r["volume_data"] < 0
+                    else f"{Decimal(r['volume_data']) / chain.DATA_PER_DMD:f}",
+                    ""
+                    if r["fees_data"] is None
+                    else f"{Decimal(r['fees_data']) / chain.DATA_PER_DMD:f}",
                 ]
             )
     return out.getvalue()
+
+
+def transfers(conn: psycopg.Connection[Any], now: datetime, floor: float) -> dict[str, Any]:
+    rows = conn.execute(
+        "SELECT txid, height, time, value_data, fee_data FROM transfers WHERE time > %s "
+        "ORDER BY height DESC, value_data DESC LIMIT 200",
+        (now - timedelta(days=7),),
+    ).fetchall()
+    return {
+        "from_dmd": floor,
+        "days": 7,
+        "transfers": [
+            {
+                "txid": r["txid"],
+                "height": r["height"],
+                "time": r["time"].isoformat(),
+                "dmd": _dmd(r["value_data"]),
+                "fee_dmd": _dmd(r["fee_data"]),
+            }
+            for r in rows
+        ],
+    }
+
+
+def richlist(conn: psycopg.Connection[Any], pool_addresses: list[str]) -> dict[str, Any]:
+    """The 100 addresses with the most DMD, from the monitor's own count of every block."""
+    rows = rich_list(conn, 100)
+    pending = conn.execute("SELECT count(*) AS n FROM blocks WHERE volume_data IS NULL").fetchone()
+    tip = conn.execute("SELECT max(height) AS h FROM blocks").fetchone()
+    mined = chain.coins_mined_data(tip["h"] or 0) if tip else 0
+    pools = set(pool_addresses)
+    return {
+        "ready": bool(rows),
+        "blocks_left_to_count": pending["n"] if pending else 0,
+        "height": tip["h"] if tip else None,
+        "addresses": [
+            {
+                "rank": n,
+                "address": r["address"],
+                "dmd": _dmd(r["balance_data"]),
+                "share_of_mined": round(r["balance_data"] / mined, 6) if mined else None,
+                "pool": r["address"] in pools,
+            }
+            for n, r in enumerate(rows, start=1)
+        ],
+    }
 
 
 def public_status(conn: psycopg.Connection[Any]) -> dict[str, Any]:
@@ -364,18 +578,34 @@ def public_status(conn: psycopg.Connection[Any]) -> dict[str, Any]:
 
 
 def publish(
-    conn: psycopg.Connection[Any], folder: Path, now: datetime, blocks_csv_too: bool
+    conn: psycopg.Connection[Any],
+    folder: Path,
+    now: datetime,
+    blocks_csv_too: bool,
+    large_transfer_dmd: float = 1000,
+    market_source: str = "",
+    pool_addresses: list[str] | None = None,
 ) -> Chain:
     t = int(now.timestamp())
     c = load_chain(conn)
     if not c.times:
         return c
     p = load_prices(conn)
+    m = load_market(conn)
     api = folder / "api"
     for name in RANGES:
-        _write(api / f"chart-{name}.json", json.dumps(chart(c, p, name, t), separators=(",", ":")))
-    _write(api / "summary.json", json.dumps(summary(conn, c, p, t, public_status(conn)), indent=1))
+        path = api / f"chart-{name}.json"
+        every = SLOW_RANGES.get(name)
+        if every and not blocks_csv_too and path.exists() and t - path.stat().st_mtime < every:
+            continue
+        _write(path, json.dumps(chart(c, p, name, t, m), separators=(",", ":")))
+    _write(
+        api / "summary.json",
+        json.dumps(summary(conn, c, p, t, public_status(conn), m, market_source), indent=1),
+    )
     _write(api / "miners.json", json.dumps(miners(conn, now), indent=1))
+    _write(api / "transfers.json", json.dumps(transfers(conn, now, large_transfer_dmd), indent=1))
+    _write(api / "richlist.json", json.dumps(richlist(conn, pool_addresses or []), indent=1))
     _write(api / "dmd-daily.csv", daily_csv(c, p, t))
     if blocks_csv_too or not (api / "dmd-blocks.csv").exists():
         _write(api / "dmd-blocks.csv", blocks_csv(conn))

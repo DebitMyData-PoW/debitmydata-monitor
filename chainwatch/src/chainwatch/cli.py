@@ -8,9 +8,13 @@
   dmd-chainwatch recompute-costs  work out every block's mining cost again (new approved figures)
   dmd-chainwatch test-alerts      send a test message to each alert channel
   dmd-chainwatch status           the latest figures, and the open alerts
+  dmd-chainwatch notify           the notifications service (systemd: dmd-notify.service)
+  dmd-chainwatch push-keys        make the notifications' key, once (install.sh does it)
 
-The service, every 10 seconds: new blocks into the database; every minute: the checks, the
-alerts, the stats page's files and Prometheus's figures; every 5 minutes: the gateway's price.
+The service, every 10 seconds: new blocks into the database (and what happened, for the
+notifications), or else the volume of blocks stored by an earlier version; every minute: the
+checks, the alerts, the stats page's files and Prometheus's figures; every 5 minutes: the
+gateway's price, and the exchanges' figures once DMD trades on one (DMDW_COINGECKO_ID).
 """
 
 from __future__ import annotations
@@ -24,12 +28,12 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from chainwatch import __version__, alerts, db, price, publish
+from chainwatch import __version__, alerts, api, db, events, market, notify, price, publish, push
 from chainwatch.alerts import CRITICAL, WARNING, Finding, Message
 from chainwatch.checks import CHECKS, Context
 from chainwatch.config import Settings, load_cost_periods
 from chainwatch.rpc import Rpc, RpcError, RpcUnavailable
-from chainwatch.sync import recompute_costs, sync
+from chainwatch.sync import fill_flows, recompute_costs, rich_list, sync
 
 log = logging.getLogger("chainwatch")
 
@@ -38,7 +42,10 @@ LOOP_SECONDS = 10
 CHECK_SECONDS = 60
 PRICE_SECONDS = 300
 BLOCKS_CSV_SECONDS = 3600
+WATCHED_SECONDS = 30
 SYNC_BATCH = 5000  # blocks per pass while filling: the checks keep running in between
+FILL_BATCH = 1000  # blocks per pass whose volume is read again (blocks of an earlier version)
+NOTIFY_SECONDS = 5
 
 
 def _now() -> datetime:
@@ -110,8 +117,14 @@ class Service:
         self.rpc = _rpc(settings)
         self.best: str | None = None
         self.next_check = self.next_price = self.next_publish = 0.0
-        self.next_blocks_csv = 0.0
+        self.next_blocks_csv = self.next_watched = 0.0
+        self.watched: frozenset[str] = frozenset()
+        self.ranks: dict[str, int] = {}
         self.stopping = False
+
+    @property
+    def large(self) -> int:
+        return int(self.settings.large_transfer_dmd * 100_000_000)
 
     def sync_blocks(self) -> bool:
         """New blocks into the database; True when something changed."""
@@ -120,16 +133,33 @@ class Service:
         except (RpcUnavailable, RpcError) as exc:
             log.info("node: %s", exc)
             return False
+        clock = time.monotonic()
+        if clock >= self.next_watched:
+            self.next_watched = clock + WATCHED_SECONDS
+            top = max(self.settings.watch_richlist, notify.RICHLIST_TOP)
+            self.ranks = {r["address"]: n for n, r in enumerate(rich_list(self.conn, top), start=1)}
+            self.watched = notify.watched_addresses(self.conn) | frozenset(self.ranks)
         if best == self.best:
+            # nothing new: the volume of blocks stored by an earlier version, a batch at a time
+            try:
+                if fill_flows(self.conn, self.rpc, FILL_BATCH, self.large):
+                    return True
+            except (RpcUnavailable, RpcError) as exc:
+                log.info("volume: %s", exc)
             return False
+        now = _now()
         result = sync(
             self.conn,
             self.rpc,
             self.periods,
             self.settings.pool_tag,
-            _now(),
+            now,
             max_blocks=SYNC_BATCH,
+            large=self.large,
+            watched=self.watched,
         )
+        with self.conn.transaction():
+            events.record_sync(self.conn, result, now, self.ranks)
         if result.added < SYNC_BATCH:
             self.best = best
         if result.added or result.removed:
@@ -151,6 +181,11 @@ class Service:
                     changed = True
             except price.PriceUnavailable as exc:
                 log.info("price: %s", exc)
+            try:
+                if market.poll(self.conn, self.settings, _now()):
+                    changed = True
+            except market.MarketUnavailable as exc:
+                log.info("market: %s", exc)
         if clock >= self.next_check:
             self.next_check = clock + CHECK_SECONDS
             now = _now()
@@ -158,6 +193,8 @@ class Service:
             findings, completed = run_checks(ctx)
             with self.conn.transaction():
                 messages = alerts.apply(self.conn, findings, completed, now)
+                events.record_messages(self.conn, messages, now)
+                events.prune(self.conn, now)
             if messages:
                 sent = alerts.send(self.settings, messages)
                 with self.conn.transaction():
@@ -170,7 +207,15 @@ class Service:
             if csv_due:
                 self.next_blocks_csv = clock + BLOCKS_CSV_SECONDS
             with self.conn.transaction():
-                chain = publish.publish(self.conn, self.settings.public_dir, now, csv_due)
+                chain = publish.publish(
+                    self.conn,
+                    self.settings.public_dir,
+                    now,
+                    csv_due,
+                    float(self.settings.large_transfer_dmd),
+                    "CoinGecko" if self.settings.coingecko_id else "",
+                    self.settings.pool_addresses,
+                )
                 publish.metrics(
                     self.conn, self.settings.metrics_file, now, _node_figures(self.rpc), chain
                 )
@@ -229,7 +274,15 @@ def cmd_check(settings: Settings) -> int:
 def cmd_publish(settings: Settings) -> int:
     service = Service(settings)
     with service.conn.transaction():
-        chain = publish.publish(service.conn, settings.public_dir, _now(), True)
+        chain = publish.publish(
+            service.conn,
+            settings.public_dir,
+            _now(),
+            True,
+            float(settings.large_transfer_dmd),
+            "CoinGecko" if settings.coingecko_id else "",
+            settings.pool_addresses,
+        )
         publish.metrics(
             service.conn, settings.metrics_file, _now(), _node_figures(service.rpc), chain
         )
@@ -274,6 +327,53 @@ def cmd_test_alerts(settings: Settings) -> int:
     return 0 if sent or not channels else 1
 
 
+def cmd_notify(settings: Settings) -> int:
+    """The notifications: the /push API for the stats page, and the sender."""
+    keys = push.load_keys(settings.push_key_file)
+    if keys is None:
+        log.error(
+            "no notifications key in %s: run dmd-chainwatch push-keys", settings.push_key_file
+        )
+    conn = db.connect(settings.database_url)
+    db.create_schema(conn)
+    server = api.serve(api.PushApi(settings, keys, _rpc(settings)), settings.push_listen)
+    stopping = False
+
+    def stop(*_: Any) -> None:
+        nonlocal stopping
+        stopping = True
+
+    signal.signal(signal.SIGTERM, stop)
+    notifier = notify.Notifier(settings, conn, keys) if keys else None
+    log.info("DebitMyData notifications %s started", __version__)
+    while not stopping:
+        started = time.monotonic()
+        try:
+            if notifier and notifier.due(started):
+                notifier.run_once(_now())
+        except Exception:
+            log.exception("notifications: trying again shortly")
+            if conn.closed or conn.broken:
+                try:
+                    conn = db.connect(settings.database_url)
+                    if notifier:
+                        notifier.conn = conn
+                except Exception:
+                    log.exception("database")
+        while not stopping and time.monotonic() - started < NOTIFY_SECONDS:
+            time.sleep(0.5)
+    server.shutdown()
+    log.info("stopped")
+    return 0
+
+
+def cmd_push_keys(settings: Settings) -> int:
+    keys, new = push.make_keys(settings.push_key_file)
+    print(f"{'made' if new else 'already there'}: {settings.push_key_file}")
+    print(f"public key: {keys.public}")
+    return 0
+
+
 def cmd_status(settings: Settings) -> int:
     conn = db.connect(settings.database_url)
     tip = db.tip(conn)
@@ -293,6 +393,14 @@ def cmd_status(settings: Settings) -> int:
         "SELECT key, severity, title, first_seen FROM alerts "
         "WHERE resolved_at IS NULL ORDER BY first_seen"
     ).fetchall()
+    filled = conn.execute(
+        "SELECT count(*) AS n, count(*) FILTER (WHERE volume_data IS NULL) AS v FROM blocks"
+    ).fetchone()
+    if filled and filled["v"]:
+        done = filled["n"] - filled["v"]
+        print(f"volume: {done} of {filled['n']} blocks read (the rest follows)")
+    devices = conn.execute("SELECT count(*) AS n FROM push_devices").fetchone()
+    print(f"notifications: {devices['n'] if devices else 0} devices")
     print(f"open alerts: {len(rows)}")
     for r in rows:
         print(
@@ -318,6 +426,8 @@ def main(argv: list[str] | None = None) -> int:
             "recompute-costs",
             "test-alerts",
             "status",
+            "notify",
+            "push-keys",
         ],
     )
     parser.add_argument(
@@ -338,6 +448,8 @@ def main(argv: list[str] | None = None) -> int:
         "recompute-costs": cmd_recompute,
         "test-alerts": cmd_test_alerts,
         "status": cmd_status,
+        "notify": cmd_notify,
+        "push-keys": cmd_push_keys,
     }
     if args.command == "run":
         Service(settings).run()

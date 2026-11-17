@@ -28,6 +28,7 @@ ALLOWED = frozenset(
         "getblock",
         "getchaintips",
         "getconnectioncount",
+        "validateaddress",
     }
 )
 

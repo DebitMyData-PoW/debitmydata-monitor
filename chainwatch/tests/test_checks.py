@@ -192,8 +192,9 @@ def test_hashrate_and_difficulty(
     jump = next(f for k, f in found.items() if k.startswith("hashrate.up."))
     assert jump.title.startswith("DebitMyData hashrate jumped: ")
     assert jump.audience == "both" and jump.kind == "event"
+    # the last hour's average (100 blocks at 4000, 20 at 1000) against a day before (1000)
     assert found[f"difficulty.up.{utc(at):%Y%m%d}"].title == (
-        "DebitMyData difficulty up 300% in a day"
+        "DebitMyData difficulty up 250% in a day"
     )
     # not again for 6 hours
     found = run(conn, node, settings, views, at + 600, {"hashrate"})
@@ -305,3 +306,13 @@ def test_a_failing_check_is_reported(
     keys = {f.key for f in findings}
     assert "monitor.difficulty" in keys and "difficulty" not in completed
     assert "node" in completed
+
+
+def test_lwma_swings_are_not_news(
+    conn: psycopg.Connection[Any], node: FakeNode, settings: Settings, views: Views
+) -> None:
+    node.add(24 * 25, difficulty=1000)
+    node.add(24, difficulty=1300)  # 30% higher for the last hour: LWMA does that
+    sync(conn, node, PERIODS, "Official", utc(node.blocks[-1]["time"]))
+    found = run(conn, node, settings, views, node.blocks[-1]["time"] + 10, {"difficulty"})
+    assert not any(k.startswith("difficulty.") for k in found)

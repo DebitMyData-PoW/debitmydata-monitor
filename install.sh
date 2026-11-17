@@ -12,6 +12,7 @@
 #                              outgoing connections only, RPC on 127.0.0.1)
 #   PostgreSQL                 the chain watch's database (dmdwatch), Grafana's read-only role
 #   dmd-chainwatch.service     the chain watch (chainwatch/): blocks, alerts, the stats files
+#   dmd-notify.service         the stats page's notifications (/push, and the notices)
 #   dmd-watchdog.timer         checks the chain watch every 5 minutes
 #   Prometheus, node_exporter  this server's and the pool server's figures, a year of them
 #   Grafana                    the team's dashboards, on the Grafana address (its own sign-in)
@@ -214,6 +215,19 @@ DMDW_GRAFANA_URL=https://$GRAFANA_HOST
 DMDW_SERVER_NAME=DebitMyData monitor
 EOF
 fi
+# Settings added by later versions, for a server installed before them: added once, at the end
+add_setting() {  # add_setting NAME value "comment"
+    grep -qE "^#? ?$1=" "$ENV_FILE" || printf '\n# %s\n%s=%s\n' "$3" "$1" "$2" >>"$ENV_FILE"
+}
+add_setting DMDW_WATCH_RICHLIST 10 \
+    "Alerts when one of the rich list's top addresses sends or receives a lot (how many of the top: 0 = off)"
+add_setting DMDW_RICHLIST_MIN_DMD 1000 "From how many DMD in one transaction"
+add_setting DMDW_PUBLIC_RICHLIST no "Also post those in the public Discord channel (yes/no)"
+add_setting DMDW_LARGE_TRANSFER_DMD 1000 \
+    "Transactions of this many DMD or more are large transfers (the stats page and its notifications)"
+add_setting DMDW_COINGECKO_ID "" \
+    "Once DMD trades on an exchange: its id on CoinGecko (the trading volume and market price)"
+add_setting DMDW_COINGECKO_KEY "" "CoinGecko's free Demo API key, if you have one"
 chown root:dmdwatch "$ENV_FILE"
 chmod 640 "$ENV_FILE"
 # The chain watch's tables, and Grafana's read access to the history (not to the alerts)
@@ -222,9 +236,12 @@ chmod 640 "$ENV_FILE"
 runuser -u postgres -- psql -q -v ON_ERROR_STOP=1 dmdwatch <<'SQL'
 GRANT CONNECT ON DATABASE dmdwatch TO grafana_ro;
 GRANT USAGE ON SCHEMA public TO grafana_ro;
-GRANT SELECT ON blocks, prices, reorgs TO grafana_ro;
+GRANT SELECT ON blocks, prices, reorgs, transfers, market TO grafana_ro;
 SQL
-# Commands: sudo dmd-chainwatch-admin status|sync|check|publish|import-prices|recompute-costs|test-alerts
+# The notifications' key (made once: a new key would make every device turn them on again)
+install -d -m 700 -o dmdwatch -g dmdwatch "$DATA/push"
+(cd / && runuser -u dmdwatch -- "$VENV/bin/dmd-chainwatch" push-keys >/dev/null)
+# Commands: sudo dmd-chainwatch-admin status|sync|check|publish|import-prices|recompute-costs|test-alerts|push-keys
 cat >/usr/local/sbin/dmd-chainwatch-admin <<'EOF'
 #!/bin/sh
 # The chain watch's commands, with the service's settings and user. A file to import is read
@@ -235,12 +252,12 @@ exec systemd-run --quiet --pipe --wait --collect --uid=dmdwatch --gid=dmdwatch \
 EOF
 chmod 755 /usr/local/sbin/dmd-chainwatch-admin
 chmod 755 "$APP/bin/dmd-watchdog"
-for unit in dmd-chainwatch.service dmd-watchdog.service dmd-watchdog.timer; do
+for unit in dmd-chainwatch.service dmd-notify.service dmd-watchdog.service dmd-watchdog.timer; do
     install -m 644 "$APP/config/systemd/$unit" "/etc/systemd/system/$unit"
 done
 systemctl daemon-reload
-systemctl enable dmd-chainwatch dmd-watchdog.timer >/dev/null
-systemctl restart dmd-chainwatch
+systemctl enable dmd-chainwatch dmd-notify dmd-watchdog.timer >/dev/null
+systemctl restart dmd-chainwatch dmd-notify
 systemctl start dmd-watchdog.timer
 
 # ------------------------------------------------------------------ Prometheus
@@ -362,7 +379,7 @@ ufw --force enable >/dev/null
 
 # ------------------------------------------------------------------ done
 step "Checking"
-for unit in debitmydata postgresql dmd-chainwatch prometheus prometheus-node-exporter grafana-server nginx wg-quick@wg0; do
+for unit in debitmydata postgresql dmd-chainwatch dmd-notify prometheus prometheus-node-exporter grafana-server nginx wg-quick@wg0; do
     printf '  %-26s %s\n' "$unit" "$(systemctl is-active "$unit" || true)"
 done
 SYNC="$(dmd-cli getblockchaininfo 2>/dev/null | jq -r '"block \(.blocks) of \(.headers)"' || echo "starting")"

@@ -2,9 +2,13 @@
 // The DMD Stats app's service worker (js/install.js registers it).
 // - Pages and figures always come from the network, so they are live. Without a network, a
 //   short "You're offline" page shows instead of the browser's error.
-// - The app's icon is kept, for that page.
-const CACHE = "dmd-stats-app-1";
+// - The app's icon and the notifications' badge are kept, for that page and the notices.
+// - The notifications (js/notify.js) arrive here and are shown; a tap opens the page they are
+//   about (the stats page, or a transaction in the explorer). The monitoring server sends
+//   {title, body, url, tag, id, time} (chainwatch/notify.py).
+const CACHE = "dmd-stats-app-2";
 const ICON = "/images/app/icon-192.png?v=1";
+const BADGE = "/images/app/badge-96.png?v=1";
 
 const OFFLINE = `<!doctype html><html lang=en><head><meta charset=utf-8>
 <meta name=viewport content="width=device-width,initial-scale=1"><title>Offline · DMD Stats</title>
@@ -17,7 +21,7 @@ p{margin:0 0 18px;color:#7d8797}button{font:700 1rem system-ui,sans-serif;color:
 self.addEventListener("install", (event) => {
   event.waitUntil(
     caches.open(CACHE)
-      .then((cache) => cache.add(new Request(ICON, { cache: "reload" })))
+      .then((cache) => cache.addAll([ICON, BADGE].map((path) => new Request(path, { cache: "reload" }))))
       .catch(() => {})
       .then(() => self.skipWaiting())
   );
@@ -40,7 +44,59 @@ self.addEventListener("fetch", (event) => {
     event.respondWith(fetch(request).catch(() => new Response(OFFLINE, { headers: { "Content-Type": "text/html; charset=utf-8" } })));
     return;
   }
-  if (url.pathname === "/images/app/icon-192.png") {
+  if (url.pathname === "/images/app/icon-192.png" || url.pathname === "/images/app/badge-96.png") {
     event.respondWith(caches.match(request, { ignoreSearch: true }).then((cached) => cached || fetch(request)));
   }
+});
+
+// A notification from the monitoring server.
+self.addEventListener("push", (event) => {
+  let data = {};
+  try { data = event.data ? event.data.json() : {}; } catch (e) { data = { body: event.data ? event.data.text() : "" }; }
+  const title = data.title || "DMD Stats";
+  event.waitUntil(self.registration.showNotification(title, {
+    body: data.body || "",
+    icon: ICON,
+    badge: BADGE,
+    tag: data.tag || undefined,      // a newer notice of the same kind replaces the older one
+    renotify: !!data.tag,
+    timestamp: data.time ? data.time * 1000 : undefined,
+    data: { url: data.url || "/" },
+  }).then(() => self.clients.matchAll({ type: "window", includeUncontrolled: true }))
+    .then((list) => list.forEach((client) => client.postMessage({ type: "dmd-stats-notice" }))));   // the bell's list
+});
+
+// The browser replaced the subscription (its keys expired, say): the server is given the new one.
+self.addEventListener("pushsubscriptionchange", (event) => {
+  const old = event.oldSubscription;
+  if (!old) return;
+  event.waitUntil(
+    (event.newSubscription ? Promise.resolve(event.newSubscription) : self.registration.pushManager.subscribe(old.options))
+      .then((subscription) => fetch("/push", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "renew", old: old.endpoint, subscription: subscription.toJSON() }),
+      }))
+      .catch(() => {})
+  );
+});
+
+// A tap on it: the page it is about, in the app or tab already open when it is this site's.
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  const target = new URL((event.notification.data && event.notification.data.url) || "/", self.location.origin);
+  const here = target.origin === self.location.origin;
+  event.waitUntil(
+    self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((list) => {
+      if (here) {
+        for (const client of list) {
+          if (client.url === target.href && "focus" in client) return client.focus();
+        }
+        for (const client of list) {
+          if ("navigate" in client && "focus" in client) return client.navigate(target.href).then((c) => (c || client).focus());
+        }
+      }
+      return self.clients.openWindow(target.href);
+    })
+  );
 });

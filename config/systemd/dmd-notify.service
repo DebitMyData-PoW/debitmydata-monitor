@@ -1,0 +1,24 @@
+[Unit]
+Description=DebitMyData notifications: the stats page's /push and the notices to the devices
+After=network-online.target postgresql.service dmd-chainwatch.service
+Wants=network-online.target
+
+[Service]
+User=dmdwatch
+Group=dmdwatch
+EnvironmentFile=/etc/debitmydata-monitor/monitor.env
+ExecStart=/opt/debitmydata-monitor/.venv/bin/dmd-chainwatch notify
+Restart=always
+RestartSec=10
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/debitmydata-monitor
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+
+[Install]
+WantedBy=multi-user.target

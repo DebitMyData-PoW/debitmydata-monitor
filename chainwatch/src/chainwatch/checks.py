@@ -12,10 +12,13 @@ is the check's name.
               of 2 blocks or more (critical from 6, the confirmations DMD payments need), a
               competing branch, invalid blocks; each one is sent once
   hashrate    the last hour's hashrate 3 times the last day's, or a third of it
-  difficulty  the difficulty 25% higher or lower than a day before
+  difficulty  the last hour's average difficulty 50% higher or lower than a day before
   miners      one miner outside the pool with a quarter of the last 144 blocks (6 hours), and one
               address with half of the pool's payouts in them
   price       the gateway's reference price still updating; a change of 5% or more
+  richlist    an address of the rich list's top (DMDW_WATCH_RICHLIST, 10) sent or received
+              DMDW_RICHLIST_MIN_DMD (1000) or more in a transaction (not its mining rewards, not
+              the pool's own addresses): each one is sent once
   server      the Prometheus alerts about the servers (disks, memory, the pool server)
   daily       the day's summary for the DMD community, after midnight UTC
 """
@@ -37,7 +40,7 @@ from typing import Any
 
 import psycopg
 
-from chainwatch import db
+from chainwatch import chain, db
 from chainwatch.alerts import CRITICAL, INFO, WARNING, Finding
 from chainwatch.config import Settings
 from chainwatch.price import USER_AGENT
@@ -56,7 +59,7 @@ DMD_CONFIRMATIONS = 6
 MINER_WINDOW = 144  # 6 hours of blocks
 EVENT_COOLDOWN = timedelta(hours=6)
 PRICE_STALE = timedelta(minutes=30)
-PUBLIC_POOL = "the DebitMyData pool"
+PUBLIC_POOL = chain.PUBLIC_POOL
 
 
 @dataclass
@@ -462,17 +465,22 @@ def check_hashrate(ctx: Context) -> list[Finding]:
     ]
 
 
+def _average_difficulty(ctx: Context, end: datetime) -> float | None:
+    """The average difficulty of the blocks of the hour before ``end``: LWMA moves it a little
+    at every block, so one block alone says less than the hour."""
+    row = ctx.conn.execute(
+        "SELECT avg(difficulty) AS d FROM blocks WHERE time > %s AND time <= %s",
+        (end - timedelta(hours=1), end),
+    ).fetchone()
+    return float(row["d"]) if row and row["d"] else None
+
+
 def check_difficulty(ctx: Context) -> list[Finding]:
-    now_row = ctx.conn.execute(
-        "SELECT difficulty FROM blocks ORDER BY height DESC LIMIT 1"
-    ).fetchone()
-    day_row = ctx.conn.execute(
-        "SELECT difficulty FROM blocks WHERE time <= %s ORDER BY height DESC LIMIT 1",
-        (ctx.now - timedelta(days=1),),
-    ).fetchone()
-    if not now_row or not day_row or day_row["difficulty"] <= 0:
+    now = _average_difficulty(ctx, ctx.now)
+    before = _average_difficulty(ctx, ctx.now - timedelta(days=1))
+    if not now or not before:
         return []
-    change = now_row["difficulty"] / day_row["difficulty"] - 1
+    change = now / before - 1
     limit = float(ctx.settings.difficulty_change_share)
     if abs(change) < limit:
         return []
@@ -482,9 +490,9 @@ def check_difficulty(ctx: Context) -> list[Finding]:
             f"difficulty.{direction}.{ctx.now:%Y%m%d}",
             INFO,
             f"DebitMyData difficulty {direction} {abs(change):.0%} in a day",
-            f"Difficulty {now_row['difficulty']:,.2f}, from {day_row['difficulty']:,.2f} a day "
-            "ago. It follows the hashrate: each block adjusts it (LWMA), so a block keeps coming "
-            "every 2.5 minutes on average.",
+            f"Difficulty {now:,.2f} on average over the last hour, from {before:,.2f} at the "
+            "same time a day before. It follows the hashrate: each block adjusts it (LWMA), so "
+            "a block keeps coming every 2.5 minutes on average.",
             kind="event",
             audience="both",
         )
@@ -502,26 +510,21 @@ def miner_shares(
     the pool's blocks paid."""
     if since is None:
         rows = conn.execute(
-            "SELECT pool, coinbase_tag, payouts FROM blocks ORDER BY height DESC LIMIT %s",
+            "SELECT pool, coinbase_tag, payouts, miner FROM blocks ORDER BY height DESC LIMIT %s",
             (blocks,),
         ).fetchall()
     else:
         rows = conn.execute(
-            "SELECT pool, coinbase_tag, payouts FROM blocks WHERE time > %s", (since,)
+            "SELECT pool, coinbase_tag, payouts, miner FROM blocks WHERE time > %s", (since,)
         ).fetchall()
     miners: dict[str, int] = {}
     payees: dict[str, int] = {}
     for r in rows:
+        who = r["miner"] or chain.miner_name(r["pool"], r["coinbase_tag"], r["payouts"] or {})
+        miners[who] = miners.get(who, 0) + 1
         if r["pool"]:
-            miners[PUBLIC_POOL] = miners.get(PUBLIC_POOL, 0) + 1
             for address, value in (r["payouts"] or {}).items():
                 payees[address] = payees.get(address, 0) + int(value)
-        else:
-            paid = r["payouts"] or {}
-            top = max(paid, key=lambda a: paid[a]) if paid else ""
-            who = r["coinbase_tag"].split(" | ")[-1] if r["coinbase_tag"] else top
-            who = who or "unknown"
-            miners[who] = miners.get(who, 0) + 1
     return {"blocks": len(rows), "miners": miners, "payees": payees}
 
 
@@ -614,6 +617,59 @@ def check_price(ctx: Context) -> list[Finding]:
                     audience="both",
                 )
             )
+    return findings
+
+
+# --------------------------------------------------------------------------- the rich list
+
+
+def check_richlist(ctx: Context) -> list[Finding]:
+    top = ctx.settings.watch_richlist
+    row = ctx.conn.execute("SELECT coalesce(max(id), 0) AS id FROM events").fetchone()
+    latest = int(row["id"]) if row else 0
+    cursor = ctx.state("richlist.cursor")
+    ctx.put("richlist.cursor", latest)
+    if top <= 0 or cursor is None:
+        return []  # the first run starts from now
+    rows = ctx.conn.execute(
+        "SELECT id, data FROM events WHERE kind = 'address' AND id > %s AND id <= %s "
+        "AND (data->>'rank')::int <= %s AND NOT (data->>'reward')::boolean ORDER BY id",
+        (int(cursor), latest, top),
+    ).fetchall()
+    minimum = int(ctx.settings.richlist_min_dmd * chain.DATA_PER_DMD)
+    ignored = set(ctx.settings.pool_addresses)
+    audience = "both" if ctx.settings.public_richlist else "private"
+    findings = []
+    for r in rows:
+        e = r["data"]
+        net = int(e["received"]) - int(e["sent"])
+        if e["address"] in ignored or abs(net) < minimum:
+            continue
+        balance = ctx.conn.execute(
+            "SELECT balance_data FROM balances WHERE address = %s", (e["address"],)
+        ).fetchone()
+        amount = f"{abs(net) / chain.DATA_PER_DMD:,.2f} DMD"
+        verb = "received" if net > 0 else "sent"
+        link = (
+            ctx.settings.explorer_tx_url + e["txid"] if ctx.settings.explorer_tx_url else e["txid"]
+        )
+        findings.append(
+            Finding(
+                f"richlist.{e['txid']}.{e['address']}",
+                INFO,
+                f"Top {top} address #{e['rank']} {verb} {amount}",
+                f"{e['address']}, number {e['rank']} of the rich list, {verb} {amount} in block "
+                f"{int(e['height']):,}"
+                + (
+                    f"; its balance is now {balance['balance_data'] / chain.DATA_PER_DMD:,.2f} DMD"
+                    if balance
+                    else ""
+                )
+                + f". Transaction: {link}",
+                kind="event",
+                audience=audience,
+            )
+        )
     return findings
 
 
@@ -712,6 +768,7 @@ CHECKS: dict[str, Callable[[Context], list[Finding]]] = {
     "difficulty": check_difficulty,
     "miners": check_miners,
     "price": check_price,
+    "richlist": check_richlist,
     "server": check_server,
     "daily": check_daily,
 }

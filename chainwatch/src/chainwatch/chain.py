@@ -12,6 +12,7 @@ work, and the DMD per block of the block's own height.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from decimal import Decimal
 
 BLOCK_SECONDS = 150
@@ -21,6 +22,8 @@ HALVING_BLOCKS = 300_000
 SUBSIDY_CYCLE_BLOCKS = 9_600_000
 WINDOW_BLOCKS = 4032  # one week of 150-second blocks
 COINBASE_MATURITY = 250
+
+PUBLIC_POOL = "the DebitMyData pool"  # the miner name of the pool's blocks (its tag)
 
 JOULES_PER_KWH = Decimal(3_600_000)
 HASHES_PER_TERAHASH = Decimal(10) ** 12
@@ -75,3 +78,22 @@ def hashrate(work_now: int, work_before: int, seconds: int) -> float:
 
 def difficulty_to_hashes(difficulty: float) -> float:
     return difficulty * 2**32
+
+
+def market_cap_usd(usd_per_dmd: float | None, height: int) -> float | None:
+    """The reference price × the DMD mined up to this block."""
+    if usd_per_dmd is None:
+        return None
+    return usd_per_dmd * coins_mined_data(height) / DATA_PER_DMD
+
+
+def miner_name(pool: bool, tag: str, paid: Mapping[str, int]) -> str:
+    """Who mined a block: the pool (its tag in the coinbase), else the last text the miner wrote in
+    the coinbase (a pool's name), else the address the coinbase paid most."""
+    if pool:
+        return PUBLIC_POOL
+    if tag:
+        return tag.split(" | ")[-1][:100] or "unknown"
+    if paid:
+        return max(paid, key=lambda a: paid[a])[:100]
+    return "unknown"

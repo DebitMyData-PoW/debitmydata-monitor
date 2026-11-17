@@ -1,10 +1,10 @@
 [project]
 name = "dmd-chainwatch"
-version = "1.0.0"
-description = "Watches the DebitMyData chain: block history, mining cost, forks, hashrate and miners, with alerts and the public stats files."
+version = "1.1.0"
+description = "Watches the DebitMyData chain: block history, mining cost, volume, forks, hashrate, miners and the rich list, with alerts, notifications and the public stats files."
 requires-python = ">=3.12"
 license = "MIT"
-dependencies = ["psycopg[binary]>=3.1,<4"]
+dependencies = ["psycopg[binary]>=3.1,<4", "cryptography>=42"]
 
 [project.optional-dependencies]
 test = ["pytest>=8"]

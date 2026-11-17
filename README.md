@@ -3,12 +3,17 @@
 The monitoring server of the DebitMyData Proof-of-Work chain, on one Ubuntu 24.04 server:
 
 - **The chain watch** (`chainwatch/`): keeps every block since block 1 in its database, works out
-  the hashrate and the mining cost of DMD (the DebitMyData coin) from them, records the
-  DebitMyData Gateway's reference price, compares its own node with the other views of the chain,
-  and sends the alerts.
+  the hashrate, the volume, every address's balance (its own rich list) and the mining cost of DMD
+  (the DebitMyData coin) from them, records the DebitMyData Gateway's reference price (and the
+  exchanges' figures once DMD trades on one), compares its own node with the other views of the
+  chain, and sends the alerts.
 - **DMD Stats** (`web/`): the public page, [stats.debitmydata.io](https://stats.debitmydata.io),
-  with CoinMarketCap-style charts since block 1 and downloads. It installs as an app on phones and
-  computers, the same way as the pool's.
+  with CoinMarketCap-style charts since block 1 (lines or candles, from 15 minutes to everything,
+  with a zoom bar), notifications that each visitor chooses, and an API
+  ([stats.debitmydata.io/api/](https://stats.debitmydata.io/api/)). It installs as an app on
+  phones and computers, the same way as the pool's.
+- **The notifications service** (`dmd-chainwatch notify`): the page's notifications (web push),
+  as each device chose them.
 - **Grafana**: the team's dashboards (the chain, the servers), on its own address, behind a sign-in.
 - **Prometheus**: a year of the monitoring server's and the pool server's figures (CPU, memory,
   disks, the pool's node, stratum, database, jobs). Its alerts go out with the chain watch's.
@@ -30,18 +35,61 @@ the pool's and the gateway's. It holds no keys and no coins.
 | A miner outside the pool found a quarter of the last 144 blocks | warning | team (public if `DMDW_PUBLIC_CONCENTRATION=yes`) |
 | One address got half of the pool's payouts in the last 144 blocks (PPLNS: its share of the pool's hashrate) | warning | team |
 | The hashrate jumped (3 times the day's usual) or dropped (a third), within an hour | sent once per 6 hours | team and public |
-| The difficulty moved 25% in a day | sent once a day | team and public |
+| The difficulty moved 50% in a day (the last hour's average against the same hour a day before) | sent once a day | team and public |
+| One of the rich list's **top 10 addresses** sent or received 1,000 DMD or more in a transaction (not its mining rewards, not the pool's own addresses) | sent once | team (public if `DMDW_PUBLIC_RICHLIST=yes`) |
 | The reference price moved 5% or more | sent once | team and public |
 | The gateway's reference price stopped updating (30 minutes) | warning | team |
 | This server's node: not on the main chain, still syncing, no peers, not answering | warning / critical | team |
 | The servers: disk almost full or full, memory short, restarted; the pool server unreachable, its stratum not listening, its node down, behind or without peers, its database down, a job (main, loop2, blocks) stopped | warning / critical | team |
 | The day's summary, after midnight UTC | — | public |
-| The chain watch itself stopped (the watchdog, every 5 minutes) | critical | team (Discord) |
+| The chain watch itself stopped, or the notifications service (the watchdog, every 5 minutes) | critical | team (Discord) |
 
 "Team": email and the private Discord channel, critical alerts with a mention. Ongoing ones are
 repeated while they last (critical every 2 hours, warning every 12 hours) and sent again when they
 end. "Public": the community's Discord channel, without reminders. The levels are in
 `/etc/debitmydata-monitor/monitor.env` (below).
+
+## The stats page's notifications
+
+Anyone can turn them on from the stats page, with the bell in the top bar or the Notifications
+card, without an account, the same way as the pool's: the browser asks for permission, and the
+device gets a notice even when the page is closed (on an iPhone, from the app on the Home Screen).
+Each device chooses, each with its own figure:
+
+| Group | Choices |
+| :-- | :-- |
+| The network | every new block; the hashrate, the difficulty (the hour's average) or the reference price moving by a chosen percentage since the last notice; transfers of a chosen size; no new block for a chosen time (and when they come again); the halving (a day before, and when it happens); the daily summary |
+| The chain's safety | the chain needs attention (blocks stopped, a fork between views) and when it is normal again; reorganizations of a chosen depth; competing branches and invalid blocks; a new miner; one miner finding a chosen share of the blocks (and when it goes back under) |
+| Pools and miners | up to 10, by name: each block it finds; its hashrate moving by a chosen percentage; no block from it for a chosen time (and when it finds one again) |
+| Wallet addresses | the top 10 of the rich list moving a chosen amount; up to 10 addresses of one's own: every transaction to or from them, mining rewards included |
+
+The monitoring server keeps each device's choices with its browser's subscription (the push
+service's address and keys), and nothing else: no account, no email, no IP. Turning them off on the
+device removes both. The notices are encrypted for each device and signed with the server's key
+(`/var/lib/debitmydata-monitor/push/vapid.pem`, made by the installer): keep it in the backups, as
+a new key means every device has to turn them on again.
+
+## The rich list and the volume
+
+The chain watch counts every address's DMD itself, from the blocks its own node gives it (each
+coinbase's payouts, and what every transaction spends and pays): it needs no explorer, and its
+balances match the node's own coins (`scantxoutset`, in the tests). The explorer
+(explorer.debitmydata.io) shows a Top 100 too, but as a page only, without an API.
+
+On-chain **volume** is the DMD the transactions sent to other addresses: an output back to an
+address the transaction spends from is change, and does not count, nor do the mining rewards.
+
+After the update from 1.0, the chain watch reads the blocks it already had again, newest first, a
+thousand every 10 seconds, to count them (`dmd-chainwatch-admin status` shows how far it is): the
+charts' volume fills from today backwards, and the rich list (and its alerts) starts once every
+block is counted, after about half an hour.
+
+## Exchanges
+
+DMD is not on an exchange yet: the page's trading volume chart is ready, and says so. Once DMD is
+listed and CoinGecko follows it, put its CoinGecko id (the "API ID" on its CoinGecko page) in
+`DMDW_COINGECKO_ID` (and CoinGecko's free Demo key in `DMDW_COINGECKO_KEY`), then restart the chain
+watch: the trading volume and the market price come in every 5 minutes, on the page and in the API.
 
 ## What you need
 
@@ -156,14 +204,16 @@ end. "Public": the community's Discord channel, without reminders. The levels ar
 | `dmd-chainwatch-admin publish` | Writes the stats page's files now |
 | `dmd-chainwatch-admin import-prices - < file.csv` | Adds the gateway's prices from its CSV export |
 | `dmd-chainwatch-admin recompute-costs` | Works out every block's mining cost again (after new approved figures) |
+| `dmd-chainwatch-admin push-keys` | Shows the notifications' public key (makes the key if there is none) |
+| `journalctl -u dmd-notify -f` | The notifications service's log (devices, notices, refusals) |
 | `dmd-cli getblockchaininfo` | This server's node (any `debitmydata-cli` command) |
 | `journalctl -u dmd-chainwatch -f` | The chain watch's log |
-| `systemctl status debitmydata dmd-chainwatch prometheus grafana-server nginx` | The services |
+| `systemctl status debitmydata dmd-chainwatch dmd-notify prometheus grafana-server nginx` | The services |
 | `wg show` | The tunnel to the pool server |
 
 ## Settings
 
-`/etc/debitmydata-monitor/monitor.env` (after a change: `systemctl restart dmd-chainwatch`):
+`/etc/debitmydata-monitor/monitor.env` (after a change: `systemctl restart dmd-chainwatch dmd-notify`):
 
 | Setting | Default | |
 | :-- | :-- | :-- |
@@ -178,8 +228,15 @@ end. "Public": the community's Discord channel, without reminders. The levels ar
 | `DMDW_OUTSIDE_MINER_SHARE` | `0.25` | A miner outside the pool, share of the last 144 blocks |
 | `DMDW_POOL_PAYEE_SHARE` | `0.5` | One address, share of the pool's payouts (`1` turns it off) |
 | `DMDW_HASHRATE_JUMP_FACTOR` | `3` | Hashrate jump or drop |
-| `DMDW_DIFFICULTY_CHANGE_SHARE` | `0.25` | Difficulty change in a day |
+| `DMDW_DIFFICULTY_CHANGE_SHARE` | `0.5` | Difficulty change in a day (the hour's average against the same hour a day before) |
 | `DMDW_PRICE_CHANGE_SHARE` | `0.05` | Reference price change |
+| `DMDW_WATCH_RICHLIST` | `10` | How many of the rich list's top addresses the team's alerts watch (`0`: none) |
+| `DMDW_RICHLIST_MIN_DMD` | `1000` | From how many DMD in a transaction |
+| `DMDW_PUBLIC_RICHLIST` | `no` | Also tell the community |
+| `DMDW_LARGE_TRANSFER_DMD` | `1000` | A large transfer, for the page, its API and its notifications |
+| `DMDW_COINGECKO_ID`, `DMDW_COINGECKO_KEY` | | The exchanges' figures, once DMD trades on one (above) |
+| `DMDW_PUSH_KEY_FILE` | `/var/lib/debitmydata-monitor/push/vapid.pem` | The notifications' key |
+| `DMDW_PUSH_MAX_DEVICES` | `20000` | Devices with notifications on, at most |
 
 **The mining cost's approved figures** are in `config/mining-cost.toml`, the same as the gateway's
 (`dmd_mining_cost` in its `config/payment_routes.yaml`). When a quarterly review changes them, add
@@ -192,7 +249,8 @@ a period there with the review's date, commit it, update the server (below), the
 cd /opt/debitmydata-monitor && git pull && ./install.sh
 ```
 
-It keeps the settings, the passwords, the database and the node's chain.
+It keeps the settings, the passwords, the database, the notifications' key and the node's chain.
+Settings added by a new version are added at the end of `monitor.env`, with their defaults.
 
 ## The figures
 
@@ -203,14 +261,18 @@ It keeps the settings, the passwords, the database and the node's chain.
 - **Mining cost**: the gateway's formula, for every block since block 1: the work of a block
   (averaged over the last week of blocks) at the approved machine efficiency and electricity
   price, divided by the DMD the block creates. Before the gateway, the charts mark it as computed.
-- **Hashrate**: the work of the blocks found divided by the time they took (an hour on the 24-hour
-  chart, a day on the long ones). **Difficulty**: the chain's own.
+- **Hashrate**: the work of the blocks found divided by the time they took (an hour up to the
+  24-hour chart, a day on the long ones). **Difficulty**: the chain's own. Their candles show how
+  they moved during each period.
+- **Market cap**: the reference price × the DMD mined so far. **Volume**: on the chain (above), and
+  on the exchanges once DMD trades on one.
 - **Who found the blocks**: from the text in each block's coinbase (the pool writes `Official`), or
   the address a block paid when it has no text.
 
-The page's files are at `https://stats.debitmydata.io/api/`: `summary.json`, `chart-24h.json`
-(also `7d`, `30d`, `1y`, `all`), `miners.json`, `dmd-daily.csv` and `dmd-blocks.csv`. Any website
-may read them.
+The page's files are its API, explained at `https://stats.debitmydata.io/api/`: `summary.json`,
+`chart-<range>.json` (`15m`, `1h`, `4h`, `24h`, `7d`, `30d`, `1y`, `all`, with points and
+candles), `miners.json`, `transfers.json`, `richlist.json`, `dmd-daily.csv` and
+`dmd-blocks.csv`. Any website may read them.
 
 ## The app
 
@@ -240,6 +302,8 @@ The icons come from the pool's (the DMD coin), with a chart in the red badge:
 - **Only Cloudflare reaches ports 80 and 443** (`cloudflare.sh`; run it again if Cloudflare changes
   its addresses). The server's other open ports: SSH, and WireGuard (51820/udp, which answers
   nothing without a known key).
+- `/push` (the notifications' settings) is limited to 30 requests a minute per visitor, takes
+  only the browsers' push services as addresses to send to, and only requests from the stats page.
 - Prometheus, node_exporter, Grafana and PostgreSQL listen on this server only. Grafana reads the
   database with a read-only role, and only the chain's history (not the alerts).
 - The pool server opens the tunnel; nothing opens on it but node_exporter **on the tunnel's

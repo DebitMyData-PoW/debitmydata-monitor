@@ -73,10 +73,25 @@ class Settings:
     outside_miner_share: Decimal = Decimal("0.25")
     pool_payee_share: Decimal = Decimal("0.5")
     hashrate_jump_factor: Decimal = Decimal(3)
-    difficulty_change_share: Decimal = Decimal("0.25")
+    difficulty_change_share: Decimal = Decimal("0.5")
     price_change_share: Decimal = Decimal("0.05")
     pool_addresses: list[str] = field(default_factory=list)
     pool_view: bool = True
+    # notifications (web push)
+    large_transfer_dmd: Decimal = Decimal(1000)
+    push_key_file: Path = Path("/var/lib/debitmydata-monitor/push/vapid.pem")
+    push_subject: str = "https://stats.debitmydata.io"
+    push_listen: str = "127.0.0.1:8471"
+    push_max_devices: int = 20_000
+    explorer_tx_url: str = "https://mempool.debitmydata.io/tx/"
+    # the rich list's top addresses, watched for the team's alerts (0: not watched)
+    watch_richlist: int = 10
+    richlist_min_dmd: Decimal = Decimal(1000)
+    public_richlist: bool = False
+    # the exchanges' figures (market.py): off until DMD is on CoinGecko
+    coingecko_id: str = ""
+    coingecko_key: str = ""
+    coingecko_url: str = "https://api.coingecko.com/api/v3"
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -122,8 +137,27 @@ class Settings:
             outside_miner_share=_share("DMDW_OUTSIDE_MINER_SHARE", "0.25"),
             pool_payee_share=_share("DMDW_POOL_PAYEE_SHARE", "0.5"),
             hashrate_jump_factor=_share("DMDW_HASHRATE_JUMP_FACTOR", "3"),
-            difficulty_change_share=_share("DMDW_DIFFICULTY_CHANGE_SHARE", "0.25"),
+            difficulty_change_share=_share("DMDW_DIFFICULTY_CHANGE_SHARE", "0.5"),
             price_change_share=_share("DMDW_PRICE_CHANGE_SHARE", "0.05"),
+            large_transfer_dmd=_share("DMDW_LARGE_TRANSFER_DMD", "1000"),
+            push_key_file=Path(
+                _env("DMDW_PUSH_KEY_FILE", "/var/lib/debitmydata-monitor/push/vapid.pem")
+            ),
+            push_subject=_env("DMDW_PUSH_SUBJECT")
+            or _env("DMDW_SITE_URL", "https://stats.debitmydata.io").rstrip("/"),
+            push_listen=_env("DMDW_PUSH_LISTEN", "127.0.0.1:8471"),
+            push_max_devices=int(_share("DMDW_PUSH_MAX_DEVICES", "20000")),
+            explorer_tx_url=_env("DMDW_EXPLORER_TX_URL", "https://mempool.debitmydata.io/tx/"),
+            watch_richlist=int(_env("DMDW_WATCH_RICHLIST", "10") or 0)
+            if _env("DMDW_WATCH_RICHLIST", "10").isdigit()
+            else 10,
+            richlist_min_dmd=_share("DMDW_RICHLIST_MIN_DMD", "1000"),
+            public_richlist=_yes("DMDW_PUBLIC_RICHLIST", False),
+            coingecko_id=_env("DMDW_COINGECKO_ID"),
+            coingecko_key=_env("DMDW_COINGECKO_KEY"),
+            coingecko_url=_env("DMDW_COINGECKO_URL", "https://api.coingecko.com/api/v3").rstrip(
+                "/"
+            ),
         )
 
 

@@ -112,3 +112,68 @@ def test_sync_and_a_reorganization_on_a_real_node(
     assert found["forks.reorg.27"].title == (
         "The DebitMyData chain was reorganized: 3 blocks after block 27 were replaced"
     )
+
+
+def _wif(secret: int) -> str:
+    """A test network's private key (prefix 193), compressed, as the node takes it."""
+    import hashlib
+
+    raw = bytes([193]) + secret.to_bytes(32, "big") + b"\x01"
+    raw += hashlib.sha256(hashlib.sha256(raw).digest()).digest()[:4]
+    alphabet = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
+    n, out = int.from_bytes(raw, "big"), ""
+    while n:
+        n, r = divmod(n, 58)
+        out = alphabet[r] + out
+    return out
+
+
+def test_volume_and_balances_on_a_real_node(
+    conn: psycopg.Connection[Any], regtest: Regtest
+) -> None:
+    """A real payment: what the monitor counts (getblock, verbosity 3) against what the node's
+    own coins say (scantxoutset). KEYS[0] is the key of private key 1, KEYS[1] of 2."""
+    from decimal import Decimal
+
+    from chainwatch.sync import rich_list
+
+    mine, friend = regtest.address(0), regtest.address(1)
+    regtest.cli("generatetoaddress", "260", mine)  # rewards mature after 250 blocks
+    first = regtest.cli("getblock", regtest.cli("getblockhash", "1"), "2")["tx"][0]
+    reward = first["vout"][0]
+    raw = regtest.cli(
+        "createrawtransaction",
+        json.dumps([{"txid": first["txid"], "vout": 0}]),
+        json.dumps({friend: 12.5, mine: 22.499}),
+    )
+    signed = regtest.cli(
+        "signrawtransactionwithkey",
+        raw,
+        json.dumps([_wif(1)]),
+        json.dumps(
+            [
+                {
+                    "txid": first["txid"],
+                    "vout": 0,
+                    "scriptPubKey": reward["scriptPubKey"]["hex"],
+                    "amount": reward["value"],
+                }
+            ]
+        ),
+    )
+    assert signed["complete"]
+    txid = regtest.cli("sendrawtransaction", signed["hex"])
+    regtest.cli("generatetoaddress", "1", mine)
+    rpc = Rpc(f"http://127.0.0.1:{regtest.port}", str(regtest.folder / "regtest" / ".cookie"))
+    sync(conn, rpc, PERIODS, "Official", datetime.now(UTC), large=10 * 100_000_000)
+    block = conn.execute("SELECT * FROM blocks ORDER BY height DESC LIMIT 1").fetchone()
+    assert block["volume_data"] == 1_250_000_000  # the change back to the sender left out
+    assert block["fees_data"] == 100_000  # 0.001 DMD
+    transfer = conn.execute("SELECT * FROM transfers").fetchone()
+    assert (transfer["txid"], transfer["value_data"]) == (txid, 1_250_000_000)
+    balances = {r["address"]: r["balance_data"] for r in rich_list(conn, 100)}
+    assert set(balances) == {mine, friend}
+    for address in balances:
+        coins = regtest.cli("scantxoutset", "start", json.dumps([f"addr({address})"]))
+        assert balances[address] == int(Decimal(str(coins["total_amount"])) * 100_000_000), address
+    assert balances[friend] == 1_250_000_000

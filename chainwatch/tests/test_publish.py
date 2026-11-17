@@ -6,12 +6,13 @@ from pathlib import Path
 from typing import Any
 
 import psycopg
+import pytest
 
 from chainwatch import price, publish
 from chainwatch.config import Settings
 from chainwatch.sync import sync
 
-from .conftest import PERIODS, FakeNode, utc
+from .conftest import PERIODS, POOL_ADDRESS, FakeNode, utc
 
 
 def test_the_stats_files(
@@ -68,6 +69,31 @@ def test_the_stats_files(
     assert first[1] is None  # no gateway price yet back then
     assert everything["points"][-1][1] == 0.001
 
+    # the new figures: market cap, volume (all known: synced with what they spend), candles
+    assert summary["market_cap_usd"] == pytest.approx(0.001 * (576 * 3 + 9) * 35)
+    assert summary["volume_24h_dmd"] == 0 and summary["transactions_24h"] == 0
+    assert summary["market"] == {
+        "listed": False,
+        "source": None,
+        "trading_volume_24h_usd": None,
+        "trading_volume_change_24h": None,
+        "price_usd": None,
+        "observed_at": None,
+    }
+    at = {f: i for i, f in enumerate(day["fields"])}
+    last = day["points"][-1]
+    assert last[at["market_cap"]] == summary["market_cap_usd"]
+    assert last[at["trading_volume_24h"]] is None and last[at["volume"]] == 0
+    assert set(day["candles"]) == {"price", "hashrate", "difficulty", "market_cap"}
+    candle = day["candles"]["difficulty"][-1]
+    assert candle[1:] == [1000.0, 1000.0, 1000.0, 1000.0]
+    for _, o, h, low, c in day["candles"]["hashrate"]:
+        assert low <= min(o, c) and h >= max(o, c)
+    quarter = json.loads((api / "chart-15m.json").read_text())
+    assert quarter["step"] == 30 and len(quarter["points"]) >= 30
+    richlist = json.loads((api / "richlist.json").read_text())
+    assert richlist["ready"] and richlist["addresses"][0]["address"] == POOL_ADDRESS
+
     miners = json.loads((api / "miners.json").read_text())
     assert miners["24h"]["miners"][0] == {
         "name": "the DebitMyData pool",
@@ -107,3 +133,41 @@ def test_price_import(conn: psycopg.Connection[Any], tmp_path: Path) -> None:
     assert [r["price_from"] for r in rows] == [None, "minimum"]
     assert rows[1]["mining_cost_usd"] == Decimal("0.0000301")
     assert rows[1]["source"] == "gateway-import"
+
+
+def test_the_exchanges_figures(
+    conn: psycopg.Connection[Any],
+    node: FakeNode,
+    settings: Settings,
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    from dataclasses import replace
+
+    from chainwatch import market
+
+    node.add(600)
+    now = node.blocks[-1]["time"] + 30
+    sync(conn, node, PERIODS, "Official", utc(now))
+    assert market.poll(conn, settings, utc(now)) is False  # off without a CoinGecko id
+    on = replace(settings, coingecko_id="debitmydata")
+    monkeypatch.setattr(
+        market,
+        "fetch",
+        lambda s: {
+            "debitmydata": {
+                "usd": Decimal("0.0021"),
+                "usd_24h_vol": Decimal("15234.5"),
+                "last_updated_at": now - 60,
+            }
+        },
+    )
+    assert market.poll(conn, on, utc(now)) is True
+    assert market.poll(conn, on, utc(now)) is False  # the same figure
+    publish.publish(conn, tmp_path, utc(now), True, 1000, "CoinGecko")
+    summary = json.loads((tmp_path / "api" / "summary.json").read_text())
+    assert summary["market"]["listed"] and summary["market"]["source"] == "CoinGecko"
+    assert summary["market"]["trading_volume_24h_usd"] == 15234.5
+    assert summary["market"]["price_usd"] == 0.0021
+    day = json.loads((tmp_path / "api" / "chart-24h.json").read_text())
+    assert day["points"][-1][day["fields"].index("trading_volume_24h")] == 15234.5
