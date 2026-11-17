@@ -347,3 +347,61 @@ def test_the_service_sends_and_drops(
     notifier.run_once(utc(node.blocks[-1]["time"] + 6))
     assert sent == [(ENDPOINT, "New block")]
     assert conn.execute("SELECT failures FROM push_devices").fetchone()["failures"] == 0
+
+
+def test_price_direction_and_targets(
+    conn: psycopg.Connection[Any], node: FakeNode, settings: Settings
+) -> None:
+    from chainwatch import price as gateway_price
+
+    node.add(10)
+    sync(conn, node, PERIODS, "Official", utc(node.blocks[-1]["time"]))
+    start = node.blocks[-1]["time"]
+    one = device(
+        price=10,
+        price_direction="up",
+        price_targets=[0.2, 0.25],
+        hashrate=None,
+        slow=None,
+    )
+    told: list[list[str]] = []
+    for step, usd in enumerate(
+        ["0.18", "0.15", "0.162", "0.17", "0.2", "0.21", "0.2", "0.3", "0.22"]
+    ):
+        now = utc(start + 300 * (step + 1))
+        gateway_price.record(conn, now, Decimal(usd), {}, "gateway")
+        out, memory, _ = notify.collect(one, [], notify.figures(conn, now), settings)
+        one = {**one, "memory": memory}
+        told.append([m["title"] for m in out])
+    assert told[0] == []  # the starting price
+    assert told[1] == []  # down 17%: not wanted (up only)
+    assert told[2] == []  # up 8% from the bottom ($0.15)
+    assert told[3] == ["Reference price up 13%: $0.17"]  # 13% from $0.15
+    assert told[4] == ["Reference price up 18%: $0.2", "Reference price reached $0.2"]
+    assert told[5] == []  # moving away from $0.2: nothing yet
+    assert told[6] == ["Reference price reached $0.2"]  # back on it
+    assert told[7] == [
+        "Reference price up 50%: $0.3",
+        "Reference price rose above $0.25: $0.3",
+    ]
+    assert told[8] == ["Reference price fell below $0.25: $0.22"]
+    # a removed target is forgotten
+    one = {**one, "prefs": prefs(price=None, price_targets=[0.2], hashrate=None, slow=None)}
+    out, memory, _ = notify.collect(one, [], notify.figures(conn, utc(start + 3000)), settings)
+    assert out == [] and set(memory["targets"]) == {"0.2"} and "price" not in memory["base"]
+
+
+def test_price_choices_are_checked() -> None:
+    clean = notify.clean_prefs(
+        {"price_direction": "down", "price_targets": ["0.2", 0.2, 0.100000001, 5]}, 1000, bool
+    )
+    assert clean["price_direction"] == "down"
+    assert clean["price_targets"] == [0.1, 0.2, 5.0]
+    for bad in (
+        {"price_direction": "sideways"},
+        {"price_targets": [0]},
+        {"price_targets": ["x"]},
+        {"price_targets": [1, 2, 3, 4, 5, 6]},
+    ):
+        with pytest.raises(ValueError):
+            notify.clean_prefs(bad, 1000, bool)

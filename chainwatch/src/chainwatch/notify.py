@@ -13,7 +13,11 @@ What a device can choose (prefs; None or false: off):
     hashrate      the 24-hour hashrate moved by this many percent since the last notice
     difficulty    the difficulty (the average of the last 24 blocks: LWMA moves it at every
                   block) moved by this many percent since the last notice
-    price         the reference price moved by this many percent since the last notice
+    price         the reference price moved by this many percent: up or down since the last
+                  notice (price_direction "both"), or only up from its lowest since then ("up"),
+                  or only down from its highest since then ("down")
+    price_targets up to 5 prices: the reference price reached one, from below or above (once,
+                  until it has moved away from it and comes back)
     transfers     a transfer of this many DMD or more (from DMDW_LARGE_TRANSFER_DMD)
     slow          no new block for this many minutes, and when blocks come again
     halving       a day before the block reward halves, and when it does
@@ -69,6 +73,8 @@ log = logging.getLogger(__name__)
 
 MAX_POOLS = 10
 MAX_ADDRESSES = 10
+MAX_PRICE_TARGETS = 5
+DIRECTIONS = ("both", "up", "down")
 MAX_NOTICES = 8
 MAX_FAILURES = 100
 INBOX_ITEMS = 40
@@ -82,6 +88,8 @@ DEFAULT_PREFS: dict[str, Any] = {
     "hashrate": 10,
     "difficulty": None,
     "price": 5,
+    "price_direction": "both",
+    "price_targets": [],
     "transfers": None,
     "slow": 30,
     "halving": True,
@@ -144,6 +152,25 @@ def clean_prefs(
         prefs["transfers"] = _figure(raw["transfers"], transfer_floor, 1e10, "transfers")
     if "richlist" in raw:
         prefs["richlist"] = _figure(raw["richlist"], 1, 1e10, "richlist")
+    if "price_direction" in raw:
+        if raw["price_direction"] not in DIRECTIONS:
+            raise ValueError("price_direction: both, up or down")
+        prefs["price_direction"] = raw["price_direction"]
+    targets = raw.get("price_targets") or []
+    if not isinstance(targets, list) or len(targets) > MAX_PRICE_TARGETS:
+        raise ValueError(f"price targets: {MAX_PRICE_TARGETS} at most")
+    prices: list[float] = []
+    for target in targets:
+        try:
+            value = float(target)
+        except (TypeError, ValueError):
+            raise ValueError("price targets: a price in US dollars") from None
+        if not math.isfinite(value) or not 0 < value <= 1_000_000:
+            raise ValueError("price targets: more than $0 and up to $1,000,000")
+        value = float(f"{value:.8g}")
+        if value not in prices:
+            prices.append(value)
+    prefs["price_targets"] = sorted(prices)
     pools = raw.get("pools") or {}
     if not isinstance(pools, dict) or len(pools) > MAX_POOLS:
         raise ValueError(f"pools: {MAX_POOLS} at most")
@@ -378,24 +405,97 @@ def _address_notice(address: str, rows: list[dict[str, Any]], tx_url: str) -> di
 
 
 def _threshold(
-    memory: dict[str, Any], key: str, value: float | None, percent: float | None, now: datetime
+    memory: dict[str, Any],
+    key: str,
+    value: float | None,
+    percent: float | None,
+    now: datetime,
+    direction: str = "both",
 ) -> tuple[float, float, datetime] | None:
-    """The change since the value of the last notice (or of when it was chosen), when it is
-    this many percent or more: (change, that value, its time); the new value is kept."""
+    """The change, when it is this many percent or more: (change, from what, its time), and the
+    new value is kept. Measured from the value of the last notice (or of when it was chosen):
+    "both" ways; or only up from the lowest value since then ("up"), or only down from the
+    highest ("down"), so that a rise after a fall counts from the bottom."""
     bases = memory.setdefault("base", {})
     if percent is None or value is None or value <= 0:
         if percent is None:
             bases.pop(key, None)
         return None
+    stamp = now.isoformat()
     base = bases.get(key)
     if not base or base.get("v", 0) <= 0:
-        bases[key] = {"v": value, "t": now.isoformat()}
+        bases[key] = {
+            "v": value,
+            "t": stamp,
+            "lo": value,
+            "lo_t": stamp,
+            "hi": value,
+            "hi_t": stamp,
+        }
         return None
-    change = value / base["v"] - 1
-    if abs(change) * 100 < percent:
+    if value < base.get("lo", base["v"]):
+        base["lo"], base["lo_t"] = value, stamp
+    if value > base.get("hi", base["v"]):
+        base["hi"], base["hi_t"] = value, stamp
+    if direction == "up":
+        start, since = base.get("lo", base["v"]), base.get("lo_t", base["t"])
+    elif direction == "down":
+        start, since = base.get("hi", base["v"]), base.get("hi_t", base["t"])
+    else:
+        start, since = base["v"], base["t"]
+    change = value / start - 1
+    wanted = {"up": change > 0, "down": change < 0}.get(direction, True)
+    if not wanted or abs(change) * 100 < percent:
         return None
-    bases[key] = {"v": value, "t": now.isoformat()}
-    return change, base["v"], datetime.fromisoformat(base["t"])
+    bases[key] = {"v": value, "t": stamp, "lo": value, "lo_t": stamp, "hi": value, "hi_t": stamp}
+    return change, start, datetime.fromisoformat(since)
+
+
+def _side(price: float, target: float) -> str:
+    if abs(price - target) <= target * 1e-9:
+        return "at"
+    return "above" if price > target else "below"
+
+
+def _price_targets(
+    memory: dict[str, Any], targets: list[float], price: float | None, now: datetime
+) -> list[dict[str, Any]]:
+    """The targets the price reached since it was last seen: on it, or past it (from below to
+    above, or from above to below). Not again until it has moved away and comes back."""
+    sides: dict[str, str] = memory.setdefault("targets", {})
+    keys = {f"{t:.8g}": t for t in targets}
+    for key in [k for k in sides if k not in keys]:
+        del sides[key]
+    if not targets:
+        memory.pop("targets", None)
+    seen = memory.get("price_seen")
+    out = []
+    if price is None:
+        return out
+    before = f" (from {_usd(seen['v'])} before)" if seen and seen.get("v") != price else ""
+    for key, target in keys.items():
+        side, last = _side(price, target), sides.get(key)
+        sides[key] = side
+        if last is None or last == side:
+            continue
+        if side == "at":
+            title = f"Reference price reached {_usd(target)}"
+        elif last == "at":
+            continue  # moving away from it: told when it comes back
+        else:
+            way = "rose above" if side == "above" else "fell below"
+            title = f"Reference price {way} {_usd(target)}: {_usd(price)}"
+        out.append(
+            _notice(
+                title,
+                f"Your price alert at {_usd(target)}{before}. DebitMyData's reference price, "
+                "not a market price.",
+                "/",
+                "target-" + key,
+            )
+        )
+    memory["price_seen"] = {"v": price, "t": now.isoformat()}
+    return out
 
 
 def _moved(change: float) -> str:
@@ -644,18 +744,25 @@ def collect(
                 "difficulty",
             )
         )
-    moved = _threshold(memory, "price", figs.price, prefs["price"], now)
+    direction = prefs.get("price_direction") or "both"
+    moved = _threshold(memory, "price", figs.price, prefs["price"], now, direction)
     if moved and figs.price:
         change, base, t = moved
+        since = {"up": "its lowest", "down": "its highest"}.get(direction)
+        start = (
+            f"From {_usd(base)}, {since} since your last notice ({_when(t)})"
+            if since
+            else (f"From {_usd(base)} on {_when(t)}")
+        )
         out.append(
             _notice(
                 f"Reference price {_moved(change)}: {_usd(figs.price)}",
-                f"From {_usd(base)} on {_when(t)}. DebitMyData's reference price, not "
-                "a market price.",
+                f"{start}. DebitMyData's reference price, not a market price.",
                 "/",
                 "price",
             )
         )
+    out += _price_targets(memory, prefs.get("price_targets") or [], figs.price, now)
     for name, choice in pools.items():
         share = figs.day_shares.get(name, 0.0)
         rate = share * figs.hashrate if figs.hashrate and figs.day_blocks >= 100 else None
