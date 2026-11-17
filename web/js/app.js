@@ -420,12 +420,12 @@
   function drawBrush(def, c, series) {
     if (current.min === undefined) return;
     brush = new ApexCharts($("dmd-zoom"), {
-      chart: { type: "area", height: window.innerWidth < 760 ? 76 : 64, sparkline: { enabled: true },
+      chart: { type: "area", height: window.innerWidth < 760 ? 57 : 48, sparkline: { enabled: true },
         background: "transparent", animations: { enabled: false } },
       series: [{ name: series[0].name, data: brushLine(series) }],
-      colors: [def.colours(c)[0]],
-      stroke: { width: 1.5, curve: "smooth" },
-      fill: { type: "gradient", gradient: { opacityFrom: 0.3, opacityTo: 0.02 } },
+      colors: [c.zoom],
+      stroke: { width: 1.2, curve: "smooth" },
+      fill: { type: "gradient", gradient: { opacityFrom: 0.18, opacityTo: 0.02 } },
       tooltip: { enabled: false },
       xaxis: { type: "datetime", min: current.min, max: current.max },
       yaxis: { min: series[0].type === "bar" ? 0 : undefined }

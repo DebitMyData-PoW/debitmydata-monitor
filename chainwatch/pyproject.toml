@@ -1,6 +1,6 @@
 [project]
 name = "dmd-chainwatch"
-version = "1.1.3"
+version = "1.1.4"
 description = "Watches the DebitMyData chain: block history, mining cost, volume, forks, hashrate, miners and the rich list, with alerts, notifications and the public stats files."
 requires-python = ">=3.12"
 license = "MIT"

@@ -13,7 +13,8 @@
   window.dmdChartTheme = function () {
     var dark = root.getAttribute("data-theme") === "dark";
     return { fore: dark ? "#9a9ba6" : "#7d8797", grid: dark ? "#2c2c35" : "#f0f1f4", tooltip: dark ? "dark" : "light",
-      red: dark ? "#ff5a64" : "#c80815", gold: dark ? "#e6b422" : "#c99a06", green: dark ? "#2fbf7a" : "#098551" };
+      red: dark ? "#ff5a64" : "#c80815", gold: dark ? "#e6b422" : "#c99a06", green: dark ? "#2fbf7a" : "#098551",
+      zoom: dark ? "#64748b" : "#94a3b8" };	// the zoom bar: discreet, under the chart
   };
 
   try {
