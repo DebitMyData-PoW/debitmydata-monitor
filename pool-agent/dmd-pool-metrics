@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+# The pool server's figures for the DebitMyData monitor (node_exporter's textfile collector reads
+# /var/lib/dmd-pool-agent/pool.prom). Run every 30 seconds by dmd-pool-metrics.timer.
+set -u
+# shellcheck source=/dev/null
+. "${DMD_POOL_AGENT_CONF:-/etc/dmd-pool-agent.conf}"
+OUT="${DMD_POOL_AGENT_OUT:-/var/lib/dmd-pool-agent/pool.prom}"
+TMP="$(mktemp "$OUT.XXXXXX")"
+# NODE_ARGS: more options for debitmydata-cli if the node needs them (-conf=..., -rpcport=...)
+# shellcheck disable=SC2086  # NODE_ARGS is split into its options on purpose
+cli() { timeout 20 runuser -u "$NODE_USER" -- "$NODE_CLI" -datadir="$NODE_DATADIR" ${NODE_ARGS:-} "$@" 2>/dev/null; }
+gauge() { printf '# HELP %s The pool server, for the DebitMyData monitor.\n# TYPE %s gauge\n%s%s %s\n' "$1" "$1" "$1" "${3:-}" "$2"; }
+{
+    gauge dmd_pool_agent_last_run_timestamp_seconds "$(date +%s)"
+    if info="$(cli getblockchaininfo)" && [ -n "$info" ]; then
+        blocks="$(jq -r .blocks <<<"$info")"
+        gauge dmd_pool_node_up 1
+        gauge dmd_pool_node_blocks "$blocks"
+        gauge dmd_pool_node_headers "$(jq -r .headers <<<"$info")"
+        gauge dmd_pool_node_peers "$(cli getconnectioncount || echo 0)"
+        # A block 2 below the tip, for the monitor to compare chains: its height, and the first
+        # 13 hex digits of its hash (a whole hash does not fit in a Prometheus number)
+        height=$((blocks - 2))
+        if [ "$height" -ge 1 ] && hash="$(cli getblockhash "$height")" && [ ${#hash} -eq 64 ]; then
+            gauge dmd_pool_node_compare_height "$height"
+            gauge dmd_pool_node_compare_prefix "$((16#${hash:0:13}))"
+        fi
+    else
+        gauge dmd_pool_node_up 0
+    fi
+    if ss -Hltn "sport = :$STRATUM_PORT" | grep -q .; then listening=1; else listening=0; fi
+    gauge dmd_pool_stratum_listening "$listening" "{port=\"$STRATUM_PORT\"}"
+    if systemctl is-active --quiet mariadb 2>/dev/null || systemctl is-active --quiet mysql 2>/dev/null; then db=1; else db=0; fi
+    gauge dmd_pool_mariadb_up "$db"
+    echo "# HELP dmd_pool_job_running The pool's jobs (screens main, loop2, blocks): 1 when running."
+    echo "# TYPE dmd_pool_job_running gauge"
+    for task in main loop2 blocks; do
+        if pgrep -f "(^|[ /])$task\.sh( |$)" >/dev/null; then running=1; else running=0; fi
+        echo "dmd_pool_job_running{task=\"$task\"} $running"
+    done
+} >"$TMP"
+chmod 644 "$TMP"
+mv "$TMP" "$OUT"

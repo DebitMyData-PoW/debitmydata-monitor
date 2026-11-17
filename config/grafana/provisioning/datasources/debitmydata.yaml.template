@@ -1,0 +1,26 @@
+# Grafana's data sources (install.sh writes /etc/grafana/provisioning/datasources/debitmydata.yaml
+# from this, with the read-only role's password).
+apiVersion: 1
+datasources:
+  - name: Prometheus
+    uid: prometheus
+    type: prometheus
+    access: proxy
+    url: http://127.0.0.1:9090
+    isDefault: true
+    editable: false
+  - name: DebitMyData chain
+    uid: dmdwatch
+    type: grafana-postgresql-datasource
+    access: proxy
+    url: 127.0.0.1:5432
+    user: grafana_ro
+    editable: false
+    jsonData:
+      database: dmdwatch
+      sslmode: disable
+      postgresVersion: 1600
+      timescaledb: false
+      maxOpenConns: 5
+    secureJsonData:
+      password: "@GRAFANA_DB_PASSWORD@"

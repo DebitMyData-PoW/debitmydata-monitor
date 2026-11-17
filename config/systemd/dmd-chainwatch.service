@@ -1,0 +1,24 @@
+[Unit]
+Description=DebitMyData chain watch: block history, alerts and the stats page's files
+After=network-online.target postgresql.service debitmydata.service
+Wants=network-online.target
+
+[Service]
+User=dmdwatch
+Group=dmdwatch
+EnvironmentFile=/etc/debitmydata-monitor/monitor.env
+ExecStart=/opt/debitmydata-monitor/.venv/bin/dmd-chainwatch run
+Restart=always
+RestartSec=10
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/debitmydata-monitor
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+
+[Install]
+WantedBy=multi-user.target

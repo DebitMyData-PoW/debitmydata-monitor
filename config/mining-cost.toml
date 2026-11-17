@@ -1,0 +1,12 @@
+# The approved figures of DMD's mining cost: the same as the DebitMyData Gateway's
+# (config/payment_routes.yaml, dmd_mining_cost), reviewed every quarter.
+#
+# When a review changes them, add a [[period]] below with the review's date ("from"), then run
+#     sudo dmd-chainwatch-admin recompute-costs
+# The blocks before a period keep the figures of the period before. Blocks from before the first
+# period use its figures (the gateway did not exist yet: the charts call that part "computed").
+
+[[period]]
+from = 2026-10-24
+electricity_usd_per_kwh = "0.06"
+efficiency_joules_per_terahash = "20"

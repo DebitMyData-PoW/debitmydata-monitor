@@ -1,0 +1,10 @@
+[Unit]
+Description=The pool server's figures for the DebitMyData monitor, every 30 seconds
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=30s
+AccuracySec=5s
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="/js/early.js?v=1"></script>
+<title>DMD Stats</title>
+<link rel="manifest" href="/manifest.json">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="DMD Stats">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<link rel="apple-touch-icon" href="/images/app/apple-touch-icon.png?v=1">
+<link rel="icon" type="image/png" sizes="192x192" href="/images/app/icon-192.png?v=1">
+<link rel="icon" type="image/png" sizes="512x512" href="/images/app/icon-512.png?v=1">
+<link rel="icon" href="/favicon.ico" sizes="32x32">
+<meta name="description" content="Live figures of the DebitMyData Proof-of-Work chain since block 1: hashrate, difficulty, the cost of mining DMD and DebitMyData's reference price, with charts and downloads.">
+<meta name="theme-color" content="#ffffff">
+<meta property="og:type" content="website">
+<meta property="og:title" content="DMD Stats: the DebitMyData network">
+<meta property="og:description" content="Hashrate, difficulty, mining cost and the reference price of DMD, the DebitMyData coin, since block 1.">
+<meta property="og:image" content="https://stats.debitmydata.io/images/app/icon-512.png?v=1">
+<meta property="og:url" content="https://stats.debitmydata.io/">
+<link rel="preload" href="/fonts/mada-latin-800-normal.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/css/stats.css?v=1">
+</head>
+<body class="dmd" id="top">
+<header class="dmd-topbar"><div class="dmd-in">
+<a class="dmd-brand" href="/"><img src="/images/dmd-stats-25.png" srcset="/images/dmd-stats-25.png 1x, /images/dmd-stats-50.png 2x, /images/dmd-stats-75.png 3x" width="25" height="25" alt="">DebitMyData <span class="dmd-tag">Stats</span></a>
+<input type="checkbox" id="dmd-menu-toggle" class="dmd-menu-toggle" aria-label="Menu" aria-controls="dmd-menu">
+<label for="dmd-menu-toggle" class="dmd-menu-button" aria-hidden="true"><span></span></label>
+<button type="button" id="dmd-theme-toggle" class="dmd-theme-toggle" aria-label="Switch between the light and dark themes"><svg class="dmd-moon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M20.5 14.2A8.5 8.5 0 1 1 9.8 3.5a6.8 6.8 0 0 0 10.7 10.7z"/></svg><svg class="dmd-sun" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="4.5"/><path d="M12 2v2.2M12 19.8V22M4.9 4.9l1.6 1.6M17.5 17.5l1.6 1.6M2 12h2.2M19.8 12H22M4.9 19.1l1.6-1.6M17.5 6.5l1.6-1.6"/></svg></button>
+<nav id="dmd-menu" class="dmd-nav" aria-label="DMD Stats">
+<a href="/" class="on" aria-current="page">Network</a>
+<a href="#data">Download the data</a>
+<a href="https://pool.debitmydata.io/" target="_blank" rel="noopener">Pool <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M7 17L17 7M9 7h8v8"/></svg></a>
+<a href="https://mempool.debitmydata.io/" target="_blank" rel="noopener">Explorer <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M7 17L17 7M9 7h8v8"/></svg></a>
+<a class="dmd-cta" href="https://debitmydata.io/#mining" target="_blank" rel="noopener">How to mine <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M7 17L17 7M9 7h8v8"/></svg></a>
+</nav></div></header>
+
+<main><div class="content-inner">
+<section class="dmd-hero">
+<div>
+<p class="dmd-eyebrow">DebitMyData network</p>
+<h1>DMD network stats</h1>
+<p class="dmd-lead">The DebitMyData Proof-of-Work chain, live and since block 1: its hashrate and difficulty, what it costs to mine DMD (the DebitMyData coin), and DebitMyData's reference price.</p>
+</div>
+<div class="dmd-status" aria-live="polite">
+<span class="dmd-pill" id="dmd-status">Loading…</span>
+<ul class="dmd-notes" id="dmd-notes"></ul>
+<small id="dmd-updated"></small>
+</div>
+</section>
+
+<ul class="dmd-stats" aria-label="Latest figures">
+<li class="dmd-stat dmd-main"><span class="dmd-label">Reference price</span><b id="s-price">–</b><span class="dmd-sub" id="s-price-sub">&nbsp;</span></li>
+<li class="dmd-stat"><span class="dmd-label">Mining cost of 1 DMD</span><b id="s-cost">–</b><span class="dmd-sub" id="s-cost-sub">&nbsp;</span></li>
+<li class="dmd-stat"><span class="dmd-label">Hashrate (24h)</span><b id="s-hashrate">–</b><span class="dmd-sub" id="s-hashrate-sub">&nbsp;</span></li>
+<li class="dmd-stat"><span class="dmd-label">Difficulty</span><b id="s-difficulty">–</b><span class="dmd-sub" id="s-difficulty-sub">&nbsp;</span></li>
+<li class="dmd-stat"><span class="dmd-label">Block height</span><b id="s-height">–</b><span class="dmd-sub" id="s-height-sub">&nbsp;</span></li>
+<li class="dmd-stat"><span class="dmd-label">Block time (24h)</span><b id="s-blocktime">–</b><span class="dmd-sub">target 2.5 min</span></li>
+<li class="dmd-stat"><span class="dmd-label">Blocks (24h)</span><b id="s-blocks">–</b><span class="dmd-sub">target 576</span></li>
+<li class="dmd-stat"><span class="dmd-label">Found by the pool (24h)</span><b id="s-pool">–</b><span class="dmd-sub"><a href="https://pool.debitmydata.io/" target="_blank" rel="noopener">pool.debitmydata.io</a></span></li>
+</ul>
+
+<section class="dmd-card" aria-labelledby="chart-title">
+<div class="dmd-card-head">
+<h2 id="chart-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M3 17l6-6 4 4 8-8"/><path d="M14 7h7v7"/></svg>Charts</h2>
+<div class="dmd-tabs" role="group" aria-label="Chart" id="dmd-metrics">
+<button type="button" class="dmd-tab" data-metric="price" aria-pressed="true">Price &amp; cost</button>
+<button type="button" class="dmd-tab" data-metric="hashrate" aria-pressed="false">Hashrate</button>
+<button type="button" class="dmd-tab" data-metric="difficulty" aria-pressed="false">Difficulty</button>
+<button type="button" class="dmd-tab" data-metric="blocktime" aria-pressed="false">Block time</button>
+</div>
+</div>
+<div class="dmd-chart-bar">
+<div class="dmd-legend" id="dmd-legend"></div>
+<div class="dmd-tabs dmd-ranges" role="group" aria-label="Period" id="dmd-ranges">
+<button type="button" class="dmd-tab" data-range="24h" aria-pressed="false">24H</button>
+<button type="button" class="dmd-tab" data-range="7d" aria-pressed="false">7D</button>
+<button type="button" class="dmd-tab" data-range="30d" aria-pressed="true">30D</button>
+<button type="button" class="dmd-tab" data-range="1y" aria-pressed="false">1Y</button>
+<button type="button" class="dmd-tab" data-range="all" aria-pressed="false">ALL</button>
+</div>
+</div>
+<div class="dmd-chart" id="dmd-chart" role="img" aria-label="Chart"></div>
+<p class="dmd-chart-note" id="dmd-chart-note"></p>
+</section>
+
+<div class="dmd-two">
+<section class="dmd-card" aria-labelledby="miners-title">
+<div class="dmd-card-head">
+<h2 id="miners-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M14 4l6 6M17 7L6 18M3 21l3-3"/><path d="M11 3c3 0 7 2 10 6"/></svg>Who found the blocks</h2>
+<div class="dmd-tabs dmd-ranges" role="group" aria-label="Period" id="dmd-miner-ranges">
+<button type="button" class="dmd-tab" data-range="24h" aria-pressed="true">24H</button>
+<button type="button" class="dmd-tab" data-range="7d" aria-pressed="false">7D</button>
+</div>
+</div>
+<ul class="dmd-bars" id="dmd-miners"><li><span class="who">Loading…</span></li></ul>
+<p class="dmd-small dmd-miners-note" id="dmd-miners-note">From the text each block's miner writes in it. With most of the hashrate in one place, more miners make the chain safer: any miner near half of it could rewrite recent blocks.</p>
+</section>
+
+<section class="dmd-card" aria-labelledby="supply-title">
+<div class="dmd-card-head">
+<h2 id="supply-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="9"/><path d="M12 7v10M9 9.5c0-1.4 1.3-2 3-2s3 .7 3 2-1.3 1.8-3 2.3-3 1-3 2.3 1.3 2 3 2 3-.6 3-2"/></svg>The coin</h2>
+</div>
+<dl class="dmd-kv">
+<div><dt>DMD mined so far</dt><dd id="k-mined">–</dd></div>
+<div><dt>Reward per block</dt><dd id="k-reward">–</dd></div>
+<div><dt>Next halving</dt><dd id="k-halving">–</dd></div>
+<div><dt>Highest daily hashrate</dt><dd id="k-ath">–</dd></div>
+<div><dt>Last block</dt><dd id="k-last">–</dd></div>
+</dl>
+</section>
+</div>
+
+<section class="dmd-card dmd-about" id="data" aria-labelledby="about-title">
+<div class="dmd-card-head">
+<h2 id="about-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5v.5"/></svg>About these figures</h2>
+</div>
+<div class="dmd-prose">
+<p><b>Reference price.</b> DMD is not on an exchange yet, so it has no market price. The reference price is the rate the DebitMyData Gateway uses for DMD payments: the higher of DebitMyData's minimum rate and the mining cost, as the gateway records it every 5 minutes (<a href="https://api.debitmydata.io/v1/prices/dmd-usd" target="_blank" rel="noopener">its API</a>). It is not a price anyone can sell DMD at.</p>
+<p><b>Mining cost.</b> The electricity it takes to mine 1 DMD: the hashes a block takes (averaged over the last week of blocks), at <span id="k-figures">20 joules per terahash and $0.06 per kWh</span>, divided by the DMD the block creates. Before the gateway existed (October 2026), it is computed from the chain with the same figures.</p>
+<p><b>Hashrate</b> is worked out from the blocks: the work they took divided by the time they took. <b>Difficulty</b> is the chain's own, adjusted at every block so that one comes every 2.5 minutes on average.</p>
+</div>
+<div class="dmd-downloads">
+<a class="dmd-button dmd-ghost" href="/api/dmd-daily.csv" download>Every day (CSV)</a>
+<a class="dmd-button dmd-ghost" href="/api/dmd-blocks.csv" download>Every block (CSV)</a>
+<a class="dmd-button dmd-ghost" href="/api/summary.json">Latest figures (JSON)</a>
+</div>
+</section>
+</div></main>
+
+<footer class="dmd-footer" id="dmd-footer"><div class="dmd-in"><div class="dmd-cols">
+<div class="dmd-col"><p class="dmd-head">Stats</p><a href="/">Network</a><a href="#data">Download the data</a><a class="dmd-get-app" href="#get-the-app"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="6" y="2" width="12" height="20" rx="3"/><path d="M11 18h2"/></svg>Get the app</a></div>
+<div class="dmd-col"><p class="dmd-head">Explorers</p><a href="https://mempool.debitmydata.io/" target="_blank" rel="noopener">Mempool explorer</a><a href="https://chain.debitmydata.io/" target="_blank" rel="noopener">Lite explorer</a><a href="https://explorer.debitmydata.io/" target="_blank" rel="noopener">Rich list &amp; API</a></div>
+<div class="dmd-col"><p class="dmd-head">Mine DMD</p><a href="https://pool.debitmydata.io/" target="_blank" rel="noopener">The pool</a><a href="https://debitmydata.io/#mining" target="_blank" rel="noopener">How to mine</a><a href="https://debitmydata.io/#wallets" target="_blank" rel="noopener">Get a DMD wallet</a></div>
+<div class="dmd-col"><p class="dmd-head">Get a DID-LLM</p><a href="https://id.debitmydata.io/" target="_blank" rel="noopener">Get a DID-LLM</a><a href="https://api.debitmydata.io/docs/advanced" target="_blank" rel="noopener">API docs</a></div>
+<div class="dmd-col"><p class="dmd-head">DebitMyData</p><a href="https://debitmydata.io/" target="_blank" rel="noopener">debitmydata.io</a><a href="https://debitmydata.com/" target="_blank" rel="noopener">debitmydata.com</a><a href="https://agenticssocialspaces.debitmydata.com/" target="_blank" rel="noopener">Agentic Spaces</a></div>
+<div class="dmd-col"><p class="dmd-head">Community</p><a href="https://discord.gg/PSK436rP4Y" target="_blank" rel="noopener">Discord</a><a href="https://x.com/debitmydataPOW" target="_blank" rel="noopener">X (Twitter)</a><a href="https://github.com/DebitMyData-PoW" target="_blank" rel="noopener">GitHub</a><a href="mailto:info@debitmydata.com">info@debitmydata.com</a></div>
+</div>
+<p class="dmd-legal">© <span id="dmd-year">2026</span> DebitMyData · DMD is the DebitMyData coin, the native coin of the DebitMyData Proof-of-Work chain · Figures from the chain itself; the reference price is not a market price.</p>
+</div></footer>
+<a class="dmd-to-top" href="#top" aria-label="Back to top" title="Back to top"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M12 5l-7 7m7-7l7 7M12 5v14"/></svg></a>
+
+<dialog id="dmd-install" class="dmd-install" aria-labelledby="dmd-install-title">
+<div class="in">
+<button type="button" id="dmd-install-close" class="dmd-install-close" aria-label="Close">&times;</button>
+<img src="/images/app/icon-512.png?v=1" alt="" width="112" height="112" loading="lazy" decoding="async">
+<h2 id="dmd-install-title" tabindex="-1" autofocus>Get the DMD Stats app</h2>
+<p id="dmd-install-how"></p>
+<ol id="dmd-install-iphone" class="steps" hidden>
+<li><span>Tap <b>Share</b></span><svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" focusable="false"><path d="M12 3v12M8 7l4-4 4 4M7 10H6a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-7a2 2 0 0 0-2-2h-1" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></li>
+<li><span>Choose <b>Add to Home Screen</b></span><svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" focusable="false"><rect x="4" y="4" width="16" height="16" rx="4" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 8v8M8 12h8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></li></ol>
+<ol id="dmd-install-android" class="steps" hidden>
+<li><span>Open the browser's menu <b>&#8942;</b></span></li>
+<li><span>Tap <b>Install app</b> or <b>Add to Home screen</b></span></li></ol>
+<p id="dmd-install-note" class="note" hidden>Already added it? Open it from your home screen.</p>
+<div class="dmd-install-actions">
+<button type="button" id="dmd-install-go" class="dmd-button dmd-install-go" hidden>Install the app</button>
+<button type="button" id="dmd-install-later" class="dmd-install-later">Not now</button>
+</div></div></dialog>
+
+<script src="/vendor/apexcharts-3.54.1.min.js"></script>
+<script src="/js/app.js?v=1"></script>
+<script src="/js/install.js?v=1"></script>
+</body>
+</html>

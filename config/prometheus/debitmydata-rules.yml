@@ -1,0 +1,92 @@
+# Alerts about the servers. The chain watch reads the ones firing every minute and sends them
+# (email and the private Discord channel), as "server.<alert>.<server>". Labels: severity
+# (critical or warning) and server; annotations: summary (the title) and description.
+groups:
+  - name: servers
+    rules:
+      - alert: DiskAlmostFull
+        expr: (node_filesystem_avail_bytes{fstype!~"tmpfs|overlay|squashfs"} / node_filesystem_size_bytes{fstype!~"tmpfs|overlay|squashfs"}) < 0.10
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: "The {{ $labels.server }} server's disk {{ $labels.mountpoint }} is almost full"
+          description: "{{ $value | humanizePercentage }} free. A full disk stops the node, the database and the pool. Find what grew: sudo du -xh {{ $labels.mountpoint }} --max-depth=2 | sort -h | tail"
+      - alert: DiskFull
+        expr: (node_filesystem_avail_bytes{fstype!~"tmpfs|overlay|squashfs"} / node_filesystem_size_bytes{fstype!~"tmpfs|overlay|squashfs"}) < 0.04
+        for: 5m
+        labels: {severity: critical}
+        annotations:
+          summary: "The {{ $labels.server }} server's disk {{ $labels.mountpoint }} is full"
+          description: "{{ $value | humanizePercentage }} free: free space now, before the node and the database stop."
+      - alert: MemoryLow
+        expr: (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes) < 0.07
+        for: 15m
+        labels: {severity: warning}
+        annotations:
+          summary: "The {{ $labels.server }} server is short of memory"
+          description: "{{ $value | humanizePercentage }} of its memory is free. Look at what uses it: top, then M."
+      - alert: ServerRebooted
+        expr: (time() - node_boot_time_seconds) < 600
+        labels: {severity: warning}
+        annotations:
+          summary: "The {{ $labels.server }} server restarted"
+          description: "It started {{ $value | humanizeDuration }} ago. If nobody restarted it, check its provider's page for an incident."
+
+  - name: pool
+    rules:
+      - alert: PoolServerUnreachable
+        expr: up{job="pool"} == 0
+        for: 3m
+        labels: {severity: critical}
+        annotations:
+          summary: "The monitor cannot reach the pool server"
+          description: "Its figures do not come through the WireGuard tunnel: the server is down, or the tunnel or its agent stopped. On the pool server: systemctl status wg-quick@wg0 prometheus-node-exporter; on the monitor: sudo wg show."
+      - alert: PoolStratumDown
+        expr: dmd_pool_stratum_listening == 0
+        for: 2m
+        labels: {severity: critical}
+        annotations:
+          summary: "The pool's stratum is not listening on port {{ $labels.port }}"
+          description: "Miners cannot connect, and most of the chain's hashrate is the pool's: blocks will stop. On the pool server: stratum.dmd restart dmd (or screens), then motd."
+      - alert: PoolNodeDown
+        expr: dmd_pool_node_up == 0
+        for: 3m
+        labels: {severity: critical}
+        annotations:
+          summary: "The pool's DebitMyData node does not answer"
+          description: "The stratum cannot get new work or send blocks. On the pool server, start the node again and check its debug.log."
+      - alert: PoolNodeBehind
+        expr: (max(dmd_chain_height) - max(dmd_pool_node_blocks)) > 3
+        for: 10m
+        labels: {severity: warning, server: pool}
+        annotations:
+          summary: "The pool's node is {{ $value }} blocks behind the monitor's"
+          description: "The pool may be mining on an old block (wasted work, orphans). Check its peers: getconnectioncount, getpeerinfo."
+      - alert: PoolNodeNoPeers
+        expr: dmd_pool_node_peers == 0
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: "The pool's DebitMyData node has no peers"
+          description: "Its blocks do not reach the network: other nodes keep the old tip and the pool's blocks may be lost."
+      - alert: PoolDatabaseDown
+        expr: dmd_pool_mariadb_up == 0
+        for: 2m
+        labels: {severity: critical}
+        annotations:
+          summary: "The pool's database (MariaDB) is down"
+          description: "The website and the payouts stop. On the pool server: sudo systemctl status mariadb."
+      - alert: PoolJobStopped
+        expr: dmd_pool_job_running == 0
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: "The pool's {{ $labels.task }} job is not running"
+          description: "Its screen stopped: on the pool server, screens start {{ $labels.task }} (motd shows them)."
+      - alert: PoolAgentStale
+        expr: (time() - dmd_pool_agent_last_run_timestamp_seconds) > 300
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: "The pool agent's figures are not updating"
+          description: "Its timer stopped: on the pool server, systemctl status dmd-pool-metrics.timer."

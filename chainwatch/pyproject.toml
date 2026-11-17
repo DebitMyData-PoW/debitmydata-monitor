@@ -1,0 +1,31 @@
+[project]
+name = "dmd-chainwatch"
+version = "1.0.0"
+description = "Watches the DebitMyData chain: block history, mining cost, forks, hashrate and miners, with alerts and the public stats files."
+requires-python = ">=3.12"
+license = "MIT"
+dependencies = ["psycopg[binary]>=3.1,<4"]
+
+[project.optional-dependencies]
+test = ["pytest>=8"]
+
+[project.scripts]
+dmd-chainwatch = "chainwatch.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF"]
+ignore = ["RUF001", "RUF002", "RUF003"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

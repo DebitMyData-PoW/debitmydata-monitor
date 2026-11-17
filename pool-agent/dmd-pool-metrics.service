@@ -1,0 +1,6 @@
+[Unit]
+Description=The pool server's figures for the DebitMyData monitor
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/dmd-pool-metrics

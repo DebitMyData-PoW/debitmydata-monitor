@@ -1,0 +1,7 @@
+[Unit]
+Description=Checks that the DebitMyData chain watch is running (it sends every other alert)
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/debitmydata-monitor/monitor.env
+ExecStart=/opt/debitmydata-monitor/bin/dmd-watchdog

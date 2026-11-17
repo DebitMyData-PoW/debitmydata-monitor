@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+# The watcher's watcher: the chain watch sends every alert, so when it stops, nothing would say
+# so. Every 5 minutes (dmd-watchdog.timer) this checks that it runs and that its figures are
+# fresh; if not, it posts to the private Discord channel (DMDW_DISCORD_WEBHOOK), at most every
+# 2 hours, and once more when it runs again.
+set -u
+FIGURES=/var/lib/debitmydata-monitor/metrics/chainwatch.prom
+STATE=/var/lib/debitmydata-monitor/watchdog.state
+MAX_AGE=600
+REPEAT=7200
+
+now=$(date +%s)
+problem=""
+if ! systemctl is-active --quiet dmd-chainwatch; then
+    problem="The service is not running (systemctl status dmd-chainwatch)."
+elif [ ! -f "$FIGURES" ]; then
+    problem="It has not written its figures yet ($FIGURES)."
+else
+    age=$(( now - $(stat -c %Y "$FIGURES") ))
+    if [ "$age" -gt "$MAX_AGE" ]; then
+        problem="Its figures are $(( age / 60 )) minutes old: it is stuck (journalctl -u dmd-chainwatch -n 50)."
+    fi
+fi
+
+last_sent=0
+[ -f "$STATE" ] && last_sent=$(cat "$STATE" 2>/dev/null || echo 0)
+
+post() {
+    local title="$1" text="$2" colour="$3"
+    [ -n "${DMDW_DISCORD_WEBHOOK:-}" ] || { logger -t dmd-watchdog "$title: $text"; return 0; }
+    local mention="${DMDW_DISCORD_MENTION:-}" user=""
+    user=$(printf '%s' "$mention" | tr -dc '0-9')
+    jq -n --arg t "$title" --arg d "$text" --argjson c "$colour" --arg m "$mention" --arg u "$user" \
+        '{content: $m, embeds: [{title: $t, description: $d, color: $c}],
+          allowed_mentions: (if $u == "" then {parse: []} else {users: [$u]} end)}' |
+        curl -fsS -m 20 -H "Content-Type: application/json" -d @- "$DMDW_DISCORD_WEBHOOK" >/dev/null
+}
+
+if [ -n "$problem" ]; then
+    if [ $(( now - last_sent )) -ge "$REPEAT" ] || [ "$last_sent" -le 0 ]; then
+        post "[CRITICAL] The DebitMyData chain watch is not working" \
+            "$problem No other alert can be sent until it runs again. On the monitoring server: sudo systemctl restart dmd-chainwatch" \
+            13109269 && echo "$now" >"$STATE"
+    fi
+elif [ "$last_sent" -gt 0 ]; then
+    post "Resolved: the DebitMyData chain watch is running again" "Its alerts are sent again." 623953 &&
+        echo 0 >"$STATE"
+fi
+exit 0
