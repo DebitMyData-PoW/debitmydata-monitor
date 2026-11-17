@@ -7,4 +7,4 @@ with the other views of the chain (explorers, the pool's node), sends alerts and
 notifications, and writes the files of the public stats page and the numbers Prometheus reads.
 """
 
-__version__ = "1.1.4"
+__version__ = "1.1.5"

@@ -391,14 +391,63 @@ def test_price_direction_and_targets(
     assert out == [] and set(memory["targets"]) == {"0.2"} and "price" not in memory["base"]
 
 
+def test_hashrate_and_difficulty_one_way_only(settings: Settings) -> None:
+    start = utc(1_800_000_000)
+    one = device(
+        hashrate=20,
+        hashrate_direction="down",
+        difficulty=20,
+        difficulty_direction="up",
+        price=None,
+        slow=None,
+    )
+    told: list[list[str]] = []
+    bodies: list[list[str]] = []
+    # (hashrate in GH/s, difficulty in thousands)
+    for step, (rate, diff) in enumerate(
+        [(1000, 100), (1300, 70), (1100, 80), (1000, 86), (1040, 90), (820, 60)]
+    ):
+        now = start + timedelta(minutes=10 * (step + 1))
+        figs = notify.Figures(
+            now, height=10, last_time=now, hashrate=rate * 1e9, difficulty=diff * 1e3
+        )
+        out, memory, _ = notify.collect(one, [], figs, settings)
+        one = {**one, "memory": memory}
+        told.append([m["title"] for m in out])
+        bodies.append([m["body"] for m in out])
+    assert told[0] == []  # the starting values
+    assert told[1] == []  # hashrate up 30%, difficulty down 30%: neither way wanted
+    assert told[2] == []  # hashrate down 15% from its highest; difficulty up 14% from its lowest
+    assert told[3] == ["Hashrate down 23%: 1.00 TH/s", "Difficulty up 23%: 86.00K"]
+    assert "its highest since your last notice" in bodies[3][0]
+    assert "its lowest since your last notice" in bodies[3][1]
+    assert told[4] == []  # both counted again from that notice
+    assert told[5] == ["Hashrate down 21%: 820.00 GH/s"]  # from 1.04 TH/s, its highest since
+
+    # both ways (the default): measured from the last notice
+    two = device(hashrate=20, difficulty=None, price=None, slow=None)
+    for rate, titles in ((1000, []), (750, ["Hashrate down 25%: 750.00 GH/s"])):
+        figs = notify.Figures(start, height=10, last_time=start, hashrate=rate * 1e9)
+        out, memory, _ = notify.collect(two, [], figs, settings)
+        two = {**two, "memory": memory}
+        assert [m["title"] for m in out] == titles
+
+
 def test_price_choices_are_checked() -> None:
     clean = notify.clean_prefs(
         {"price_direction": "down", "price_targets": ["0.2", 0.2, 0.100000001, 5]}, 1000, bool
     )
     assert clean["price_direction"] == "down"
     assert clean["price_targets"] == [0.1, 0.2, 5.0]
+    assert (clean["hashrate_direction"], clean["difficulty_direction"]) == ("both", "both")
+    clean = notify.clean_prefs(
+        {"hashrate_direction": "up", "difficulty_direction": "down"}, 1000, bool
+    )
+    assert (clean["hashrate_direction"], clean["difficulty_direction"]) == ("up", "down")
     for bad in (
         {"price_direction": "sideways"},
+        {"hashrate_direction": "left"},
+        {"difficulty_direction": None},
         {"price_targets": [0]},
         {"price_targets": ["x"]},
         {"price_targets": [1, 2, 3, 4, 5, 6]},

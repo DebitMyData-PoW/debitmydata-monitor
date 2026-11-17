@@ -16,11 +16,12 @@
   var form = $("dmd-notify-form"), badge = $("dmd-notify-state"), msg = $("dmd-notify-msg");
   var turnOn = $("dmd-notify-on"), turnOff = $("dmd-notify-off"), test = $("dmd-notify-test");
   var poolList = $("dmd-pools"), poolPick = $("dmd-pool-pick"), addressList = $("dmd-addresses"), addressNew = $("dmd-address-new");
-  var targetList = $("dmd-targets"), targetNew = $("dmd-target-new"), direction = form.elements.price_direction;
+  var targetList = $("dmd-targets"), targetNew = $("dmd-target-new");
 
   var SEEN = "dmd-stats-seen", POOL = "the DebitMyData pool";
   var FLAGS = ["blocks", "halving", "daily", "status", "branches", "new_miners"];
   var FIGURES = ["hashrate", "difficulty", "price", "transfers", "slow", "reorg", "concentration", "richlist"];
+  var DIRECTED = ["hashrate", "difficulty", "price"];	// up or down, up only, down only
   var ADDRESS = /^(dm1[02-9ac-hj-np-z]{6,87}|[1-9A-HJ-NP-Za-km-z]{25,40})$/;
   var config = null, sub = null, on = false, loaded = false, busy = false, testing = false;
   var items = [], pools = {}, addresses = [], targets = [], note = "", saveTimer = null;
@@ -50,7 +51,7 @@
       var num = figureBox(n);
       prefs[n] = form.elements[n].checked ? Number(num.value) : null;
     });
-    prefs.price_direction = direction.value;
+    DIRECTED.forEach(function (n) { prefs[n + "_direction"] = form.elements[n + "_direction"].value; });
     prefs.price_targets = targets.slice();
     prefs.pools = pools;
     prefs.addresses = addresses.slice();
@@ -75,7 +76,7 @@
       form.elements[n].checked = prefs[n] !== null && prefs[n] !== undefined;
       if (prefs[n] !== null && prefs[n] !== undefined) figureBox(n).value = prefs[n];
     });
-    if (prefs.price_direction) direction.value = prefs.price_direction;
+    DIRECTED.forEach(function (n) { if (prefs[n + "_direction"]) form.elements[n + "_direction"].value = prefs[n + "_direction"]; });
     targets = (prefs.price_targets || []).slice();
     pools = prefs.pools || {};
     addresses = (prefs.addresses || []).slice();
@@ -206,7 +207,9 @@
   }
   $("dmd-target-add").addEventListener("click", addTarget);
   targetNew.addEventListener("keydown", function (e) { if (e.key === "Enter") { e.preventDefault(); addTarget(); } });
-  direction.addEventListener("change", function () { form.elements.price.checked = true; shade(); changed(); });
+  DIRECTED.forEach(function (n) {	// choosing a way turns the figure on
+    form.elements[n + "_direction"].addEventListener("change", function () { form.elements[n].checked = true; shade(); changed(); });
+  });
 
   function addAddress() {
     var address = addressNew.value.trim();

@@ -10,12 +10,13 @@ What a device can choose (prefs; None or false: off):
 
   The network
     blocks        every new block (several at once: one notice)
-    hashrate      the 24-hour hashrate moved by this many percent since the last notice
+    hashrate      the 24-hour hashrate moved by this many percent
     difficulty    the difficulty (the average of the last 24 blocks: LWMA moves it at every
-                  block) moved by this many percent since the last notice
-    price         the reference price moved by this many percent: up or down since the last
-                  notice (price_direction "both"), or only up from its lowest since then ("up"),
-                  or only down from its highest since then ("down")
+                  block) moved by this many percent
+    price         the reference price moved by this many percent
+                  Each of the three either way since the last notice (its *_direction "both"),
+                  or only up from its lowest since then ("up"), or only down from its highest
+                  since then ("down"): hashrate_direction, difficulty_direction, price_direction
     price_targets up to 5 prices: the reference price reached one, from below or above (once,
                   until it has moved away from it and comes back)
     transfers     a transfer of this many DMD or more (from DMDW_LARGE_TRANSFER_DMD)
@@ -75,6 +76,7 @@ MAX_POOLS = 10
 MAX_ADDRESSES = 10
 MAX_PRICE_TARGETS = 5
 DIRECTIONS = ("both", "up", "down")
+DIRECTED = ("hashrate", "difficulty", "price")  # the figures with a direction to choose
 MAX_NOTICES = 8
 MAX_FAILURES = 100
 INBOX_ITEMS = 40
@@ -86,7 +88,9 @@ SENDERS = 16
 DEFAULT_PREFS: dict[str, Any] = {
     "blocks": False,
     "hashrate": 10,
+    "hashrate_direction": "both",
     "difficulty": None,
+    "difficulty_direction": "both",
     "price": 5,
     "price_direction": "both",
     "price_targets": [],
@@ -152,10 +156,12 @@ def clean_prefs(
         prefs["transfers"] = _figure(raw["transfers"], transfer_floor, 1e10, "transfers")
     if "richlist" in raw:
         prefs["richlist"] = _figure(raw["richlist"], 1, 1e10, "richlist")
-    if "price_direction" in raw:
-        if raw["price_direction"] not in DIRECTIONS:
-            raise ValueError("price_direction: both, up or down")
-        prefs["price_direction"] = raw["price_direction"]
+    for name in DIRECTED:
+        key = name + "_direction"
+        if key in raw:
+            if raw[key] not in DIRECTIONS:
+                raise ValueError(f"{key}: both, up or down")
+            prefs[key] = raw[key]
     targets = raw.get("price_targets") or []
     if not isinstance(targets, list) or len(targets) > MAX_PRICE_TARGETS:
         raise ValueError(f"price targets: {MAX_PRICE_TARGETS} at most")
@@ -451,6 +457,16 @@ def _threshold(
     return change, start, datetime.fromisoformat(since)
 
 
+def _from(value: str, direction: str, t: datetime, first: bool = False) -> str:
+    """Where a change was measured from: the value at the last notice, or (one way only) the
+    lowest or highest since then."""
+    since = {"up": "its lowest", "down": "its highest"}.get(direction)
+    word = "From" if first else "from"
+    if since:
+        return f"{word} {value}, {since} since your last notice ({_when(t)})"
+    return f"{word} {value} on {_when(t)}"
+
+
 def _side(price: float, target: float) -> str:
     if abs(price - target) <= target * 1e-9:
         return "at"
@@ -721,43 +737,40 @@ def collect(
     else:
         memory.pop("slow", None)
 
-    # the figures that moved by the chosen percentage
-    moved = _threshold(memory, "hashrate", figs.hashrate, prefs["hashrate"], now)
+    # the figures that moved by the chosen percentage, either way or the way chosen
+    way = {name: prefs.get(name + "_direction") or "both" for name in DIRECTED}
+    moved = _threshold(memory, "hashrate", figs.hashrate, prefs["hashrate"], now, way["hashrate"])
     if moved and figs.hashrate:
         change, base, t = moved
         out.append(
             _notice(
                 f"Hashrate {_moved(change)}: {_rate(figs.hashrate)}",
-                f"The network's 24-hour hashrate, from {_rate(base)} on {_when(t)}.",
+                f"The network's 24-hour hashrate, {_from(_rate(base), way['hashrate'], t)}.",
                 "/",
                 "hashrate",
             )
         )
-    moved = _threshold(memory, "difficulty", figs.difficulty, prefs["difficulty"], now)
+    moved = _threshold(
+        memory, "difficulty", figs.difficulty, prefs["difficulty"], now, way["difficulty"]
+    )
     if moved and figs.difficulty:
         change, base, t = moved
         out.append(
             _notice(
                 f"Difficulty {_moved(change)}: {_big(figs.difficulty)}",
-                f"The last hour's average, from {_big(base)} on {_when(t)}.",
+                f"The last hour's average, {_from(_big(base), way['difficulty'], t)}.",
                 "/",
                 "difficulty",
             )
         )
-    direction = prefs.get("price_direction") or "both"
-    moved = _threshold(memory, "price", figs.price, prefs["price"], now, direction)
+    moved = _threshold(memory, "price", figs.price, prefs["price"], now, way["price"])
     if moved and figs.price:
         change, base, t = moved
-        since = {"up": "its lowest", "down": "its highest"}.get(direction)
-        start = (
-            f"From {_usd(base)}, {since} since your last notice ({_when(t)})"
-            if since
-            else (f"From {_usd(base)} on {_when(t)}")
-        )
         out.append(
             _notice(
                 f"Reference price {_moved(change)}: {_usd(figs.price)}",
-                f"{start}. DebitMyData's reference price, not a market price.",
+                f"{_from(_usd(base), way['price'], t, first=True)}. DebitMyData's reference "
+                "price, not a market price.",
                 "/",
                 "price",
             )

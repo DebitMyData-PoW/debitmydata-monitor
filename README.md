@@ -68,7 +68,7 @@ Each device chooses, each with its own figure:
 
 | Group | Choices |
 | :-- | :-- |
-| The network | every new block; the hashrate, the difficulty (the hour's average) or the reference price moving by a chosen percentage since the last notice (the price: up or down, up only, or down only); the reference price reaching prices of one's own (up to 5, again each time it comes back to one); transfers of a chosen size; no new block for a chosen time (and when they come again); the halving (a day before, and when it happens); the daily summary |
+| The network | every new block; the hashrate, the difficulty (the hour's average) or the reference price moving by a chosen percentage since the last notice (each: up or down, up only, or down only); the reference price reaching prices of one's own (up to 5, again each time it comes back to one); transfers of a chosen size; no new block for a chosen time (and when they come again); the halving (a day before, and when it happens); the daily summary |
 | The chain's safety | the chain needs attention (blocks stopped, a fork between views) and when it is normal again; reorganizations of a chosen depth; competing branches and invalid blocks; a new miner; one miner finding a chosen share of the blocks (and when it goes back under) |
 | Pools and miners | up to 10, by name: each block it finds; its hashrate moving by a chosen percentage; no block from it for a chosen time (and when it finds one again) |
 | Wallet addresses | the top 10 of the rich list moving a chosen amount; up to 10 addresses of one's own: every transaction to or from them, mining rewards included |
