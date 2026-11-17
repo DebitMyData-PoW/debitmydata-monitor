@@ -40,7 +40,7 @@ groups:
         labels: {severity: critical}
         annotations:
           summary: "The monitor cannot reach the pool server"
-          description: "Its figures do not come through the WireGuard tunnel: the server is down, or the tunnel or its agent stopped. On the pool server: systemctl status wg-quick@wg0 prometheus-node-exporter; on the monitor: sudo wg show."
+          description: "Its figures do not come through the WireGuard tunnel: the server is down, or the tunnel or its agent stopped. On the pool server: systemctl status wg-quick@dmdmon prometheus-node-exporter, and sudo wg show dmdmon; on the monitor: sudo wg show wg0, and sudo ufw status | grep 51820."
       - alert: PoolStratumDown
         expr: dmd_pool_stratum_listening == 0
         for: 2m

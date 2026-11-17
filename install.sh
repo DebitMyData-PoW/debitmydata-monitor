@@ -22,6 +22,8 @@
 # It keeps the settings, the passwords, the database and the node's chain. Settings that need
 # you (alerts: email and Discord) are in /etc/debitmydata-monitor/monitor.env.
 set -euo pipefail
+# A command that fails stops the install: say where, rather than stopping without a word.
+trap 'printf "\nERROR: the install stopped at line %s: %s\nRun it again once that is fixed: it carries on with what is already done.\n" "$LINENO" "$BASH_COMMAND" >&2' ERR
 
 APP=/opt/debitmydata-monitor
 CONF=/etc/debitmydata-monitor
@@ -345,7 +347,12 @@ systemctl restart wg-quick@wg0
 
 # ------------------------------------------------------------------ the firewall
 step "The firewall"
-SSH_PORT="$(sshd -T 2>/dev/null | awk '/^port /{print $2; exit}')"
+# The SSH port to keep open: the one this session came in on (Ubuntu 24.04 can listen through
+# ssh.socket, which sshd -T does not show, and sshd -T can fail), else sshd's setting, else 22.
+SSH_PORT="${SSH_CONNECTION##* }"
+if ! [[ "$SSH_PORT" =~ ^[0-9]+$ ]]; then
+    SSH_PORT="$( (sshd -T 2>/dev/null || true) | awk '/^port /{print $2; exit}')"
+fi
 ufw allow "${SSH_PORT:-22}/tcp" comment 'SSH' >/dev/null
 ufw allow 51820/udp comment 'WireGuard (pool agent)' >/dev/null
 ufw default deny incoming >/dev/null
