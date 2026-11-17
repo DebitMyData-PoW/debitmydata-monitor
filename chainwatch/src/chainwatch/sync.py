@@ -33,7 +33,7 @@ from psycopg.types.json import Jsonb
 
 from chainwatch import chain
 from chainwatch.config import CostPeriod, period_for
-from chainwatch.rpc import Rpc
+from chainwatch.rpc import Rpc, RpcError
 
 log = logging.getLogger(__name__)
 
@@ -399,22 +399,53 @@ def sync(
     return result
 
 
+FILL_BLOCKS = 1000  # blocks per read at most
+FILL_TRANSACTIONS = 2000  # transactions per read at first (the service adjusts it)
+
+
+def _read_old(rpc: Rpc, rows: list[dict[str, Any]]) -> list[dict[str, Any] | None]:
+    """The blocks with what their transactions spend; one the node will not give that way is
+    read without it (None: not even that), so that one block cannot stop the count."""
+    try:
+        return list(rpc.batch([("getblock", [r["hash"], 3]) for r in rows]))
+    except RpcError:
+        if len(rows) > 1:
+            return [b for r in rows for b in _read_old(rpc, [r])]
+    log.warning("block %s: read without what it spends", rows[0]["height"])
+    try:
+        return [rpc.call("getblock", rows[0]["hash"], 2)]
+    except RpcError as exc:
+        log.warning("block %s: %s", rows[0]["height"], exc)
+        return [None]
+
+
 def fill_flows(
-    conn: psycopg.Connection[Any], rpc: Rpc, limit: int, large: int = LARGE_TRANSFER_DATA
+    conn: psycopg.Connection[Any],
+    rpc: Rpc,
+    transactions: int = FILL_TRANSACTIONS,
+    large: int = LARGE_TRANSFER_DATA,
 ) -> int:
-    """Volume, fees and large transfers of blocks stored without them (by an earlier version),
-    newest first. Returns how many blocks were done."""
-    rows = conn.execute(
-        "SELECT height, hash, time, payouts FROM blocks WHERE volume_data IS NULL "
+    """Volume, fees, large transfers and balances of blocks stored without them (by an earlier
+    version), newest first: as many blocks as hold about this many transactions (one at least,
+    FILL_BLOCKS at most), so that a busy part of the chain is read in smaller pieces. Returns how
+    many blocks were done."""
+    candidates = conn.execute(
+        "SELECT height, hash, time, payouts, tx_count FROM blocks WHERE volume_data IS NULL "
         "ORDER BY height DESC LIMIT %s",
-        (limit,),
+        (FILL_BLOCKS,),
     ).fetchall()
+    rows, total = [], 0
+    for r in candidates:
+        if rows and total + r["tx_count"] > transactions:
+            break
+        rows.append(r)
+        total += r["tx_count"]
     if not rows:
         return 0
-    blocks = rpc.batch([("getblock", [r["hash"], 3]) for r in rows])
+    blocks = _read_old(rpc, rows)
     updates, big, counts, move_rows = [], [], [], []
     for r, block in zip(rows, blocks, strict=True):
-        moved = flows(block, large)
+        moved = flows(block, large) if block else Flows(None, None, [], [])
         if moved.volume is None:  # the node cannot tell what it spends: -1, not known
             moved = Flows(-1, None, [], [])
         updates.append((moved.volume, moved.fees, r["hash"]))
@@ -440,6 +471,11 @@ def fill_flows(
             conn.cursor().executemany(MOVE, [m for m in move_rows if m[0] in heights])
         _balances(conn, kept, 1)
     return len(rows)
+
+
+def blocks_to_count(conn: psycopg.Connection[Any]) -> int:
+    row = conn.execute("SELECT count(*) AS n FROM blocks WHERE volume_data IS NULL").fetchone()
+    return int(row["n"]) if row else 0
 
 
 def rich_list(conn: psycopg.Connection[Any], top: int = 100) -> list[dict[str, Any]]:

@@ -79,10 +79,13 @@ balances match the node's own coins (`scantxoutset`, in the tests). The explorer
 On-chain **volume** is the DMD the transactions sent to other addresses: an output back to an
 address the transaction spends from is change, and does not count, nor do the mining rewards.
 
-After the update from 1.0, the chain watch reads the blocks it already had again, newest first, a
-thousand every 10 seconds, to count them (`dmd-chainwatch-admin status` shows how far it is): the
-charts' volume fills from today backwards, and the rich list (and its alerts) starts once every
-block is counted, after about half an hour.
+After the update from 1.0, the chain watch reads the blocks it already had again, newest first,
+to count them, between new blocks (`dmd-chainwatch-admin status` shows how far it is, and its log
+every 10,000 blocks): the charts' volume fills from today backwards, and the rich list (and its
+alerts) starts once every block is counted. It reads as many blocks at a time as the node answers
+quickly, fewer in a busy part of the chain; a block the node cannot give with what its
+transactions spend is counted without it (its volume is then unknown) rather than stopping the
+count.
 
 ## Exchanges
 

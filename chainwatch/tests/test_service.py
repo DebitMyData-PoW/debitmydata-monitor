@@ -56,3 +56,34 @@ def test_a_pass_of_the_service(
     }
     assert "monitor.server" in open_keys
     assert "dmd_chain_height 599" in s.metrics_file.read_text()
+
+
+def test_the_count_adapts_to_a_slow_node(
+    conn: psycopg.Connection[Any],
+    node: FakeNode,
+    settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from chainwatch.rpc import RpcUnavailable
+
+    node.add(50)
+    monkeypatch.setattr(cli, "_rpc", lambda s: node)
+    service = cli.Service(replace(settings, mining_cost_file=CONFIG))
+    service.pass_once()
+    conn.execute("UPDATE blocks SET volume_data = NULL")
+    reads: list[int] = []
+
+    def slow(conn_: Any, rpc: Any, transactions: int, large: int) -> int:
+        reads.append(transactions)
+        raise RpcUnavailable("timed out")
+
+    monkeypatch.setattr(cli, "fill_flows", slow)
+    assert service.count_old_blocks() is False
+    assert service.fill_transactions == cli.FILL_TRANSACTIONS // 4
+    monkeypatch.undo()
+    monkeypatch.setattr(cli, "_rpc", lambda s: node)
+    assert service.count_old_blocks() is True
+    assert (
+        conn.execute("SELECT count(*) AS n FROM blocks WHERE volume_data IS NULL").fetchone()["n"]
+        == 0
+    )

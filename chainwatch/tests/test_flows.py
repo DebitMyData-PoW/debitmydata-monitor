@@ -129,3 +129,42 @@ def test_the_followed_addresses_activity(conn: psycopg.Connection[Any], node: Fa
     assert ("dm1qfriend", 3, False) in got
     assert (POOL_ADDRESS, 3, True) in got  # the reward of block 3
     assert (POOL_ADDRESS, 0, True) in got
+
+
+def test_counting_reads_busy_blocks_in_smaller_pieces_and_gets_past_a_bad_one(
+    conn: psycopg.Connection[Any], node: FakeNode, monkeypatch: Any
+) -> None:
+    from chainwatch.rpc import RpcError
+    from chainwatch.sync import blocks_to_count
+
+    payments = [spend(f"p{i}", [(POOL_ADDRESS, "1")], [(f"dm1qpayee{i}", "0.9")]) for i in range(9)]
+    node.add(3)
+    node.add(1, txs=payments)  # 10 transactions
+    node.add(3)
+    sync(conn, node, PERIODS, "Official", NOW)
+    conn.execute("UPDATE blocks SET volume_data = NULL, fees_data = NULL")
+    conn.execute("DELETE FROM balances")
+    conn.execute("DELETE FROM address_moves")
+    assert fill_flows(conn, node, 5) == 3  # the 3 newest (1 transaction each), not the busy one
+    assert fill_flows(conn, node, 5) == 1  # the busy one alone: one block at least
+    assert balances(conn)["dm1qpayee0"] == int(Decimal("0.9") * DMD)
+
+    # the busy block cannot be read with what it spends: counted without it, the others as usual
+    conn.execute("UPDATE blocks SET volume_data = NULL, fees_data = NULL")
+    conn.execute("DELETE FROM balances")
+    conn.execute("DELETE FROM address_moves")
+    bad = node.blocks[3]["hash"]
+    call = node.call
+
+    def broken(method: str, *params: Any) -> Any:
+        if method == "getblock" and params[0] == bad and params[1] == 3:
+            raise RpcError("getblock: Undo data not available")
+        return call(method, *params)
+
+    monkeypatch.setattr(node, "call", broken)
+    assert fill_flows(conn, node, 100) == 7
+    assert blocks_to_count(conn) == 0
+    row = conn.execute("SELECT volume_data FROM blocks WHERE height = 3").fetchone()
+    assert row["volume_data"] == -1  # not known
+    assert "dm1qpayee0" not in balances(conn)
+    assert balances(conn)[POOL_ADDRESS] == 7 * 35 * DMD  # its rewards are counted

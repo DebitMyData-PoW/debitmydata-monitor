@@ -12,7 +12,8 @@
   dmd-chainwatch push-keys        make the notifications' key, once (install.sh does it)
 
 The service, every 10 seconds: new blocks into the database (and what happened, for the
-notifications), or else the volume of blocks stored by an earlier version; every minute: the
+notifications), or else, for up to 6 seconds, the volume and balances of blocks stored by an
+earlier version; every minute: the
 checks, the alerts, the stats page's files and Prometheus's figures; every 5 minutes: the
 gateway's price, and the exchanges' figures once DMD trades on one (DMDW_COINGECKO_ID).
 """
@@ -33,7 +34,14 @@ from chainwatch.alerts import CRITICAL, WARNING, Finding, Message
 from chainwatch.checks import CHECKS, Context
 from chainwatch.config import Settings, load_cost_periods
 from chainwatch.rpc import Rpc, RpcError, RpcUnavailable
-from chainwatch.sync import fill_flows, recompute_costs, rich_list, sync
+from chainwatch.sync import (
+    FILL_TRANSACTIONS,
+    blocks_to_count,
+    fill_flows,
+    recompute_costs,
+    rich_list,
+    sync,
+)
 
 log = logging.getLogger("chainwatch")
 
@@ -44,7 +52,8 @@ PRICE_SECONDS = 300
 BLOCKS_CSV_SECONDS = 3600
 WATCHED_SECONDS = 30
 SYNC_BATCH = 5000  # blocks per pass while filling: the checks keep running in between
-FILL_BATCH = 1000  # blocks per pass whose volume is read again (blocks of an earlier version)
+FILL_SECONDS = 6  # per pass at most, counting the blocks of an earlier version
+FILL_MAX_TRANSACTIONS = 20_000  # per read at most, when the node answers quickly
 NOTIFY_SECONDS = 5
 
 
@@ -120,6 +129,7 @@ class Service:
         self.next_blocks_csv = self.next_watched = 0.0
         self.watched: frozenset[str] = frozenset()
         self.ranks: dict[str, int] = {}
+        self.fill_transactions = FILL_TRANSACTIONS
         self.stopping = False
 
     @property
@@ -140,13 +150,7 @@ class Service:
             self.ranks = {r["address"]: n for n, r in enumerate(rich_list(self.conn, top), start=1)}
             self.watched = notify.watched_addresses(self.conn) | frozenset(self.ranks)
         if best == self.best:
-            # nothing new: the volume of blocks stored by an earlier version, a batch at a time
-            try:
-                if fill_flows(self.conn, self.rpc, FILL_BATCH, self.large):
-                    return True
-            except (RpcUnavailable, RpcError) as exc:
-                log.info("volume: %s", exc)
-            return False
+            return self.count_old_blocks()
         now = _now()
         result = sync(
             self.conn,
@@ -170,6 +174,36 @@ class Service:
                 result.tip_height,
             )
         return bool(result.added or result.removed)
+
+    def count_old_blocks(self) -> bool:
+        """Nothing new: the volume and balances of blocks stored by an earlier version, for a few
+        seconds. A read the node does not answer in time is made smaller (a busy part of the
+        chain); one it answers quickly, larger. True when blocks were counted."""
+        deadline = time.monotonic() + FILL_SECONDS
+        done = 0
+        try:
+            while time.monotonic() < deadline:
+                started = time.monotonic()
+                counted = fill_flows(self.conn, self.rpc, self.fill_transactions, self.large)
+                if not counted:
+                    break
+                done += counted
+                if time.monotonic() - started < 2:
+                    self.fill_transactions = min(FILL_MAX_TRANSACTIONS, self.fill_transactions * 2)
+        except RpcUnavailable as exc:
+            self.fill_transactions = max(1, self.fill_transactions // 4)
+            log.warning(
+                "volume: the node did not answer (%s): reading %d transactions at a time",
+                exc,
+                self.fill_transactions,
+            )
+        except RpcError as exc:
+            log.warning("volume: %s", exc)
+        if done:
+            left = blocks_to_count(self.conn)
+            if left == 0 or left // 10_000 != (left + done) // 10_000:
+                log.info("volume and balances: %d blocks left to count", left)
+        return bool(done)
 
     def pass_once(self) -> None:
         clock = time.monotonic()
@@ -398,7 +432,10 @@ def cmd_status(settings: Settings) -> int:
     ).fetchone()
     if filled and filled["v"]:
         done = filled["n"] - filled["v"]
-        print(f"volume: {done} of {filled['n']} blocks read (the rest follows)")
+        print(
+            f"volume and rich list: {done} of {filled['n']} blocks counted "
+            f"({filled['v']} left; the rich list starts when none is left)"
+        )
     devices = conn.execute("SELECT count(*) AS n FROM push_devices").fetchone()
     print(f"notifications: {devices['n'] if devices else 0} devices")
     print(f"open alerts: {len(rows)}")
