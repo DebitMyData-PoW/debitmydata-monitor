@@ -1,0 +1,382 @@
+#!/usr/bin/env python3
+"""dmd-tor-check: keeps Tor working and up to date for this server's DebitMyData node.
+
+The node reaches its peers through Tor (proxy=127.0.0.1:9050 in its settings), so that none of
+them sees this server's IP address. If Tor stops, or gets so old that the Tor network refuses
+it, the node loses its peers. Every 30 minutes (dmd-tor-check.timer) this:
+
+1. starts Tor again if it is not running;
+2. asks Tor whether the Tor network still recommends its version; when Tor answers that it is
+   old, unrecommended or obsolete, upgrades it at once from the Tor Project's repository
+   (unattended-upgrades also installs each new version within a day) and restarts it;
+3. restarts Tor when it has been cut off from the Tor network for two checks in a row (at most
+   once an hour);
+4. checks that the node still goes through Tor.
+
+What it does and finds goes to the log (journalctl -u dmd-tor-check). Problems, their end, and
+the repairs it made also go to Discord when a webhook is set: DMD_TOR_WEBHOOK in
+/etc/default/dmd-tor-check, or, on the monitoring server, the alerts' DMDW_DISCORD_WEBHOOK.
+
+    dmd-tor-check            check, and repair what it can (as root, by its timer)
+    dmd-tor-check --status   only show how things stand: changes nothing
+"""
+
+from __future__ import annotations
+
+import argparse
+import contextlib
+import json
+import os
+import re
+import socket
+import subprocess
+import sys
+import time
+import urllib.request
+from pathlib import Path
+
+CONTROL = os.environ.get("DMD_TOR_CONTROL", "/run/tor/control")
+COOKIE = os.environ.get("DMD_TOR_COOKIE", "/run/tor/control.authcookie")
+STATE = Path(os.environ.get("DMD_TOR_STATE", "/var/lib/dmd-tor-check/state.json"))
+NODE_CONF = os.environ.get("DMD_NODE_CONF", "/etc/debitmydata/debitmydata.conf")
+NODE_CLI = os.environ.get("DMD_NODE_CLI", "/usr/local/bin/dmd-cli")
+MONITOR_ENV = os.environ.get("DMD_MONITOR_ENV", "/etc/debitmydata-monitor/monitor.env")
+SERVER_NAME = os.environ.get("DMD_SERVER_NAME") or socket.gethostname()
+WAIT_AFTER_START = float(os.environ.get("DMD_TOR_WAIT", "20"))
+
+PROXY = "127.0.0.1:9050"
+SERVICE = "tor@default"  # the Tor that runs; tor.service only starts and stops it
+UPGRADE_WHEN = {"old", "unrecommended", "obsolete"}
+REPEAT_SECONDS = 6 * 3600  # a problem that lasts is posted again every 6 hours
+RESTART_GAP_SECONDS = 3600  # Tor is restarted for being cut off at most once an hour
+RED, GREEN, BLUE = 13109269, 623953, 3447003
+
+
+def run(cmd: list[str], timeout: float = 120) -> subprocess.CompletedProcess[str]:
+    env = dict(os.environ, DEBIAN_FRONTEND="noninteractive", NEEDRESTART_SUSPEND="1")
+    try:
+        return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, env=env)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return subprocess.CompletedProcess(cmd, 1, "", str(exc))
+
+
+def tor_running() -> bool:
+    return run(["systemctl", "is-active", "--quiet", SERVICE], timeout=30).returncode == 0
+
+
+def ask_tor(keys: list[str]) -> dict[str, str] | None:
+    """Tor's answers to GETINFO for each key, from its control socket; None if it is silent."""
+    try:
+        cookie = Path(COOKIE).read_bytes().hex()
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
+            sock.settimeout(10)
+            sock.connect(CONTROL)
+            stream = sock.makefile("rwb")
+
+            def send(line: str) -> list[str]:
+                stream.write(line.encode() + b"\r\n")
+                stream.flush()
+                lines = []
+                while True:
+                    raw = stream.readline()
+                    if not raw:
+                        raise OSError("Tor closed its control connection")
+                    text = raw.decode(errors="replace").rstrip("\r\n")
+                    lines.append(text)
+                    if len(text) >= 4 and text[3] == "+":  # data lines follow, up to a lone "."
+                        while (raw := stream.readline()) and raw.rstrip(b"\r\n") != b".":
+                            pass
+                    elif len(text) < 4 or text[3] == " ":
+                        return lines
+
+            if not send(f"AUTHENTICATE {cookie}")[-1].startswith("250"):
+                return None
+            answers = {}
+            for key in keys:
+                for line in send(f"GETINFO {key}"):
+                    found = re.match(r"^250[-+ ]([^=]+)=(.*)$", line)
+                    if found:
+                        answers[found.group(1)] = found.group(2)
+            with contextlib.suppress(OSError):
+                send("QUIT")
+            return answers
+    except (OSError, ValueError):
+        return None
+
+
+def node_proxy() -> str | None:
+    """The proxy the node uses for IPv4 peers ("" for none); None when the node does not answer."""
+    if not Path(NODE_CLI).exists():
+        return None
+    answer = run([NODE_CLI, "getnetworkinfo"], timeout=30)
+    if answer.returncode != 0:
+        return None
+    try:
+        networks = json.loads(answer.stdout).get("networks", [])
+    except ValueError:
+        return None
+    for network in networks:
+        if network.get("name") == "ipv4":
+            return network.get("proxy", "")
+    return ""
+
+
+def package_version() -> str:
+    answer = run(["dpkg-query", "-W", "-f=${Version}", "tor"], timeout=30)
+    return answer.stdout.strip() if answer.returncode == 0 else "unknown"
+
+
+def upgrade_tor() -> tuple[str, str]:
+    """Installs Tor's newest version now; returns the package's version before and after."""
+    before = package_version()
+    lock = ["-o", "DPkg::Lock::Timeout=300"]
+    run(["apt-get", *lock, "update", "-q"], timeout=900)
+    run(
+        [
+            "apt-get",
+            *lock,
+            "install",
+            "-y",
+            "-q",
+            "--only-upgrade",
+            "-o",
+            "Dpkg::Options::=--force-confold",
+            "tor",
+        ],
+        timeout=1200,
+    )
+    return before, package_version()
+
+
+def tor_facts() -> dict[str, object]:
+    """How Tor stands: running, its version and whether the network recommends it, connected."""
+    facts: dict[str, object] = {"running": tor_running(), "answers": False}
+    if not facts["running"]:
+        return facts
+    info = ask_tor(
+        ["version", "status/version/current", "status/bootstrap-phase", "network-liveness"]
+    )
+    if info is None:
+        return facts
+    found = re.search(r"PROGRESS=(\d+)", info.get("status/bootstrap-phase", ""))
+    progress = int(found.group(1)) if found else 0
+    liveness = info.get("network-liveness", "unknown")
+    facts.update(
+        answers=True,
+        version=(info.get("version") or "unknown").split()[0],
+        status=info.get("status/version/current", "unknown"),
+        progress=progress,
+        liveness=liveness,
+        connected=progress >= 100 and liveness != "down",
+    )
+    return facts
+
+
+# ------------------------------------------------------------------ Discord
+
+
+def setting(name: str) -> str:
+    if os.environ.get(name):
+        return os.environ[name]
+    try:  # on the monitoring server, the alerts' settings
+        for line in Path(MONITOR_ENV).read_text().splitlines():
+            if line.startswith(f"{name}="):
+                return line.split("=", 1)[1].strip().strip('"').strip("'")
+    except OSError:
+        pass
+    return ""
+
+
+def post(title: str, text: str, colour: int) -> None:
+    webhook = setting("DMD_TOR_WEBHOOK") or setting("DMDW_DISCORD_WEBHOOK")
+    if not webhook:
+        return
+    mention = setting("DMDW_DISCORD_MENTION")
+    user = re.sub(r"\D", "", mention)
+    body = {
+        "content": mention,
+        "embeds": [{"title": title, "description": text, "color": colour}],
+        "allowed_mentions": {"users": [user]} if user else {"parse": []},
+    }
+    request = urllib.request.Request(
+        webhook,
+        data=json.dumps(body).encode(),
+        headers={"Content-Type": "application/json", "User-Agent": "DebitMyData-TorCheck/1.0"},
+    )
+    try:
+        urllib.request.urlopen(request, timeout=20).close()
+    except OSError as exc:
+        print(f"Discord: not sent ({exc.__class__.__name__})", flush=True)
+
+
+# ------------------------------------------------------------------ the check
+
+
+def load_state() -> dict:
+    try:
+        return json.loads(STATE.read_text())
+    except (OSError, ValueError):
+        return {}
+
+
+def save_state(state: dict) -> None:
+    STATE.parent.mkdir(parents=True, exist_ok=True)
+    temporary = STATE.with_suffix(".tmp")
+    temporary.write_text(json.dumps(state))
+    temporary.replace(STATE)
+
+
+def check() -> int:
+    state = load_state()
+    now = time.time()
+    problems: dict[str, str] = {}
+    repairs: list[str] = []
+
+    facts = tor_facts()
+    if not facts["running"]:
+        run(["systemctl", "restart", "tor"], timeout=120)
+        time.sleep(WAIT_AFTER_START)
+        repairs.append("Tor was not running: started it again.")
+        facts = tor_facts()
+        if not facts["running"]:
+            problems["stopped"] = (
+                "Tor does not start, so the node cannot reach its peers "
+                "(systemctl status tor@default; journalctl -u tor@default -n 50)."
+            )
+    if facts["running"] and not facts["answers"]:
+        problems["silent"] = (
+            "Tor runs but does not answer on its control socket (/run/tor/control)."
+        )
+
+    if facts.get("answers"):
+        if facts["status"] in UPGRADE_WHEN:
+            before, after = upgrade_tor()
+            if after != before:
+                run(["systemctl", "restart", "tor"], timeout=120)
+                repairs.append(
+                    f"Tor {facts['version']} was {facts['status']} for the Tor network: "
+                    f"upgraded it from {before} to {after}, and restarted it."
+                )
+            else:
+                problems["version"] = (
+                    f"Tor {facts['version']} is {facts['status']} for the Tor network, and no "
+                    "newer version could be installed (apt-get install --only-upgrade tor). The "
+                    "Tor network may soon refuse it, and the node would lose its peers."
+                )
+        if facts["connected"]:
+            state["cut_off_checks"] = 0
+        else:
+            state["cut_off_checks"] = int(state.get("cut_off_checks", 0)) + 1
+            if state["cut_off_checks"] >= 2:  # the first time, Tor may only be starting
+                if now - float(state.get("last_restart", 0)) >= RESTART_GAP_SECONDS:
+                    run(["systemctl", "restart", "tor"], timeout=120)
+                    state["last_restart"] = now
+                    repairs.append(
+                        "Tor had been cut off from the Tor network for two checks: restarted it."
+                    )
+                problems["cut-off"] = (
+                    f"Tor is cut off from the Tor network (connected {facts['progress']}%, network "
+                    f"{facts['liveness']}): the node cannot reach its peers."
+                )
+
+    proxy = node_proxy()
+    if proxy is not None and proxy != PROXY:
+        problems["node"] = (
+            f"The DebitMyData node does not go through Tor (its proxy: {proxy or 'none'}): "
+            f"its peers see this server's IP address. Add proxy={PROXY} to {NODE_CONF}, then "
+            "systemctl restart debitmydata."
+        )
+
+    for repair in repairs:
+        print(repair, flush=True)
+    for problem in problems.values():
+        print(f"Problem: {problem}", flush=True)
+    if not problems and not repairs:
+        if facts.get("answers") and not facts["connected"]:
+            print(
+                f"Tor {facts['version']} is not connected yet ({facts['progress']}%, network "
+                f"{facts['liveness']}): looked at again at the next check.",
+                flush=True,
+            )
+        else:
+            print(
+                f"Tor {facts.get('version', '?')} ({facts.get('status', '?')}), connected; "
+                "the node goes through it.",
+                flush=True,
+            )
+
+    previous = state.get("problems", [])
+    if problems:
+        if (
+            sorted(problems) != sorted(previous)
+            or now - float(state.get("last_post", 0)) >= REPEAT_SECONDS
+        ):
+            post(f"[WARNING] Tor on {SERVER_NAME}", " ".join([*problems.values(), *repairs]), RED)
+            state["last_post"] = now
+    elif previous:
+        post(
+            f"Resolved: Tor on {SERVER_NAME} works again",
+            " ".join(
+                [*repairs, "Tor runs, is connected and up to date, and the node goes through it."]
+            ),
+            GREEN,
+        )
+        state["last_post"] = 0
+    elif repairs:
+        post(f"Tor on {SERVER_NAME}: repaired", " ".join(repairs), BLUE)
+    state["problems"] = sorted(problems)
+    state["last_check"] = now
+    save_state(state)
+    return 0
+
+
+def status() -> int:
+    facts = tor_facts()
+    if not facts["running"]:
+        tor = "not running"
+    elif not facts["answers"]:
+        tor = "running, but not answering on /run/tor/control"
+    else:
+        link = (
+            "connected"
+            if facts["connected"]
+            else f"not connected ({facts['progress']}%, network {facts['liveness']})"
+        )
+        tor = f"running, version {facts['version']} ({facts['status']} for the Tor network), {link}"
+    proxy = node_proxy()
+    if proxy is None:
+        node = "not answering"
+    elif proxy == PROXY:
+        node = f"goes through Tor (proxy {PROXY})"
+    else:
+        node = f"does NOT go through Tor (proxy: {proxy or 'none'})"
+    updates = run(["apt-config", "dump", "Unattended-Upgrade::Origins-Pattern"], timeout=30).stdout
+    automatic = "every day, from the Tor Project (unattended-upgrades)"
+    state = load_state()
+    last = (
+        time.strftime("%Y-%m-%d %H:%M UTC", time.gmtime(state["last_check"]))
+        if state.get("last_check")
+        else "never"
+    )
+    print(f"Tor:         {tor}")
+    print(f"Package:     tor {package_version()}")
+    print(f"Updates:     {automatic if 'TorProject' in updates else 'NOT automatic'}")
+    print(f"The node:    {node}")
+    print(
+        f"Last check:  {last}"
+        + (f", problems: {', '.join(state['problems'])}" if state.get("problems") else "")
+    )
+    return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        description="Keeps Tor working and up to date for the DebitMyData node."
+    )
+    parser.add_argument("--status", action="store_true", help="only show how things stand")
+    args = parser.parse_args(argv)
+    return status() if args.status else check()
+
+
+if __name__ == "__main__":
+    sys.exit(main())

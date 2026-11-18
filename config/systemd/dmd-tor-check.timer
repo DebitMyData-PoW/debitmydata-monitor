@@ -1,0 +1,10 @@
+[Unit]
+Description=Check Tor every 30 minutes (running, connected, up to date)
+
+[Timer]
+OnBootSec=10min
+OnUnitActiveSec=30min
+RandomizedDelaySec=2min
+
+[Install]
+WantedBy=timers.target

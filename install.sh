@@ -9,7 +9,9 @@
 #
 # What it sets up:
 #   debitmydata.service        this server's own DebitMyData node (main chain, no wallet,
-#                              outgoing connections only, RPC on 127.0.0.1)
+#                              outgoing connections only, through Tor; RPC on 127.0.0.1)
+#   Tor                        tor.sh: from the Tor Project's repository, kept up to date by
+#                              unattended-upgrades, checked every 30 minutes (dmd-tor-check.timer)
 #   PostgreSQL                 the chain watch's database (dmdwatch), Grafana's read-only role
 #   dmd-chainwatch.service     the chain watch (chainwatch/): blocks, alerts, the stats files
 #   dmd-notify.service         the stats page's notifications (/push, and the notices)
@@ -109,12 +111,18 @@ install -d -m 750 -o dmd -g dmd "$DMD_DATA"
 install -d -m 750 -o root -g dmd /etc/debitmydata
 install -d -m 755 -o dmdwatch -g dmdwatch "$DATA" "$DATA/public" "$DATA/public/api" "$DATA/metrics"
 
+# ------------------------------------------------------------------ Tor, for the node
+step "Tor (the node reaches its peers through it, hiding this server's IP address)"
+"$APP/tor.sh"
+
 # ------------------------------------------------------------------ the DebitMyData node
 step "The DebitMyData node (main chain)"
 if [ ! -s "$DMD_CONF" ]; then
     cat >"$DMD_CONF" <<EOF
 # The monitoring server's own DebitMyData node: the main chain, no wallet, RPC on this server
 # only, outgoing connections only. The chain watch signs in with the cookie (group-readable).
+# Peers are reached through Tor, so that none of them sees this server's IP address (tor.sh).
+proxy=127.0.0.1:9050
 server=1
 disablewallet=1
 listen=0
@@ -379,7 +387,7 @@ ufw --force enable >/dev/null
 
 # ------------------------------------------------------------------ done
 step "Checking"
-for unit in debitmydata postgresql dmd-chainwatch dmd-notify prometheus prometheus-node-exporter grafana-server nginx wg-quick@wg0; do
+for unit in tor@default debitmydata postgresql dmd-chainwatch dmd-notify prometheus prometheus-node-exporter grafana-server nginx wg-quick@wg0 dmd-tor-check.timer; do
     printf '  %-26s %s\n' "$unit" "$(systemctl is-active "$unit" || true)"
 done
 SYNC="$(dmd-cli getblockchaininfo 2>/dev/null | jq -r '"block \(.blocks) of \(.headers)"' || echo "starting")"

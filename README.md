@@ -53,6 +53,7 @@ the pool's and the gateway's. It holds no keys and no coins.
 | The servers: disk almost full or full, memory short, restarted; the pool server unreachable, its stratum not listening, its node down, behind or without peers, its database down, a job (main, loop2, blocks) stopped | warning / critical | team |
 | The day's summary, after midnight UTC | — | public |
 | The chain watch itself stopped, or the notifications service (the watchdog, every 5 minutes) | critical | team (Discord) |
+| Tor stopped, cut off, or too old and could not be upgraded; the node no longer going through it (`dmd-tor-check`, every 30 minutes; it also repairs what it can) | warning | team (Discord) |
 
 "Team": email and the private Discord channel, critical alerts with a mention. Ongoing ones are
 repeated while they last (critical every 2 hours, warning every 12 hours) and sent again when they
@@ -223,6 +224,8 @@ watch: the trading volume and the market price come in every 5 minutes, on the p
 | `journalctl -u dmd-chainwatch -f` | The chain watch's log |
 | `systemctl status debitmydata dmd-chainwatch dmd-notify prometheus grafana-server nginx` | The services |
 | `wg show` | The tunnel to the pool server |
+| `sudo dmd-tor-check --status` | Tor: running, its version, connected, the node going through it |
+| `journalctl -u dmd-tor-check` | What the Tor check found and repaired |
 
 ## Settings
 
@@ -312,6 +315,12 @@ The icons come from the pool's (the DMD coin), with a chart in the red badge:
 - The monitoring server holds **no keys and no coins**: its node has no wallet, and its RPC
   answers this server only. The chain watch only reads (`chainwatch/src/chainwatch/rpc.py` lists
   the calls).
+- **The node's IP address stays hidden too.** The node accepts no connections (`listen=0`) and
+  reaches its peers through **Tor** (`tor.sh`: `proxy=127.0.0.1:9050`), so its peers, and the
+  explorers that list the peers they see, only get a Tor exit's address. Tor comes from the Tor
+  Project's own repository; unattended-upgrades installs each new version within a day, and
+  `dmd-tor-check` (every 30 minutes) restarts Tor when it stops or is cut off, upgrades it at once
+  when the Tor network says its version is too old, and alerts the team when it cannot.
 - **Only Cloudflare reaches ports 80 and 443** (`cloudflare.sh`; run it again if Cloudflare changes
   its addresses). The server's other open ports: SSH, and WireGuard (51820/udp, which answers
   nothing without a known key).

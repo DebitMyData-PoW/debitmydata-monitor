@@ -1,0 +1,9 @@
+[Unit]
+Description=Keeps Tor running and up to date for the DebitMyData node
+After=network-online.target tor.service
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/default/dmd-tor-check
+ExecStart=/usr/local/sbin/dmd-tor-check
+TimeoutStartSec=30min
