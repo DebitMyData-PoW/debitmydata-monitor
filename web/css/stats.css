@@ -110,6 +110,10 @@ box-shadow:0 10px 22px rgba(200,8,21,.22);white-space:nowrap}
 /* Hero */
 .dmd .dmd-hero{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:end;gap:12px 32px;margin:10px 0 24px}
 .dmd .dmd-hero h1{font:800 3rem/1.02 var(--sans);text-transform:uppercase;letter-spacing:-.015em;margin:0 0 14px}
+/* The title: the DMD coin before it, no taller than its capitals, and its last word in red, as the pool's */
+.dmd .dmd-hero h1 .dmd-h1-first{white-space:nowrap}
+.dmd .dmd-hero h1 .dmd-h1-coin{display:inline-block;width:auto;height:.66em;margin:0 .2em 0 0;vertical-align:baseline}
+.dmd .dmd-hero h1 .dmd-h1-red{color:var(--red-text)}
 .dmd .dmd-hero p.dmd-lead{color:var(--body);margin:0;max-width:640px}
 .dmd .dmd-status{display:flex;flex-direction:column;align-items:flex-end;gap:6px}
 .dmd .dmd-pill{display:inline-flex;align-items:center;gap:8px;padding:7px 16px;border-radius:999px;font:700 .9rem/1.2 var(--sans);
