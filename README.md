@@ -61,10 +61,10 @@ end. "Public": the community's Discord channel, without reminders. The levels ar
 
 ## The stats page's notifications
 
-Anyone can turn them on from the stats page, with the bell in the top bar or the Notifications
-card, without an account, the same way as the pool's: the browser asks for permission, and the
-device gets a notice even when the page is closed (on an iPhone, from the app on the Home Screen).
-Each device chooses, each with its own figure:
+Anyone can turn them on from the stats page, with the bell in the top bar (on the API page too)
+or the Notifications card, without an account, the same way as the pool's: the browser asks for
+permission, and the device gets a notice even when the page is closed (on an iPhone, from the app
+on the Home Screen). Each device chooses, each with its own figure:
 
 | Group | Choices |
 | :-- | :-- |

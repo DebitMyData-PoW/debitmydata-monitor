@@ -3,10 +3,13 @@
 // network, the chain's safety, pools and miners, wallet addresses, each with its own figure.
 // The monitoring server keeps the choices with the browser's subscription (/push) and sends the
 // notices; turning them off here removes both. Nothing else is sent anywhere.
+// A page without the card (the API page) has the bell alone: its notices, turning on (with the
+// usual choices), a test, turning off, and a link to the card on the home page.
 (function () {
   "use strict";
   var box = document.getElementById("dmd-bellbox"), card = document.getElementById("notifications");
-  if (!box || !card) return;
+  if (!box) return;
+  var full = !!card;	// the card is on this page
   function $(id) { return document.getElementById(id); }
   var bell = $("dmd-bell"), panel = $("dmd-bell-panel");
   var list = panel.querySelector(".dmd-bell-list"), empty = panel.querySelector(".dmd-bell-empty");
@@ -24,14 +27,17 @@
   var DIRECTED = ["hashrate", "difficulty", "price"];	// up or down, up only, down only
   var ADDRESS = /^(dm1[02-9ac-hj-np-z]{6,87}|[1-9A-HJ-NP-Za-km-z]{25,40})$/;
   var config = null, sub = null, on = false, loaded = false, busy = false, testing = false;
-  var items = [], pools = {}, addresses = [], targets = [], note = "", saveTimer = null;
+  var items = [], pools = {}, addresses = [], targets = [], note = "", told = "", saveTimer = null;
   var can = "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
   var iphone = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
   var inApp = window.matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
 
   function blocked() { return can && Notification.permission === "denied"; }
   function minerName(name) { return name === POOL ? "DebitMyData pool" : name; }
-  function say(text, bad) { msg.textContent = text || ""; msg.className = "dmd-small" + (bad ? " bad" : ""); }
+  function say(text, bad) {
+    if (!full) { told = text || ""; return; }	// shown in the bell's panel instead
+    msg.textContent = text || ""; msg.className = "dmd-small" + (bad ? " bad" : "");
+  }
   function post(data) {
     return fetch("/push", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(data) })
       .then(function (r) {
@@ -45,6 +51,7 @@
   // ------------------------------------------------------------------ the choices in the card
   function figureBox(name) { return form.querySelector('.dmd-num[data-for="' + name + '"]'); }
   function readForm() {
+    if (!full) return {};	// the server's usual choices
     var prefs = {};
     FLAGS.forEach(function (n) { prefs[n] = form.elements[n].checked; });
     FIGURES.forEach(function (n) {
@@ -58,6 +65,7 @@
     return prefs;
   }
   function invalid() {
+    if (!full) return null;
     var bad = null;
     FIGURES.forEach(function (n) {
       var num = figureBox(n);
@@ -70,6 +78,7 @@
     return bad;
   }
   function fillForm(prefs) {
+    if (!full) return;
     FLAGS.forEach(function (n) { if (n in prefs) form.elements[n].checked = !!prefs[n]; });
     FIGURES.forEach(function (n) {
       if (!(n in prefs)) return;
@@ -168,7 +177,7 @@
       addressList.appendChild(li);
     });
   }
-  $("dmd-pool-add").addEventListener("click", function () {
+  if (full) $("dmd-pool-add").addEventListener("click", function () {
     var name = poolPick.value;
     if (!name) return;
     if (Object.keys(pools).length >= ((config && config.max_pools) || 10)) { say("You can follow 10 pools and miners at most.", true); return; }
@@ -205,11 +214,13 @@
     drawTargets();
     changed();
   }
-  $("dmd-target-add").addEventListener("click", addTarget);
-  targetNew.addEventListener("keydown", function (e) { if (e.key === "Enter") { e.preventDefault(); addTarget(); } });
-  DIRECTED.forEach(function (n) {	// choosing a way turns the figure on
-    form.elements[n + "_direction"].addEventListener("change", function () { form.elements[n].checked = true; shade(); changed(); });
-  });
+  if (full) {
+    $("dmd-target-add").addEventListener("click", addTarget);
+    targetNew.addEventListener("keydown", function (e) { if (e.key === "Enter") { e.preventDefault(); addTarget(); } });
+    DIRECTED.forEach(function (n) {	// choosing a way turns the figure on
+      form.elements[n + "_direction"].addEventListener("change", function () { form.elements[n].checked = true; shade(); changed(); });
+    });
+  }
 
   function addAddress() {
     var address = addressNew.value.trim();
@@ -222,17 +233,19 @@
     drawAddresses();
     changed();
   }
-  $("dmd-address-add").addEventListener("click", addAddress);
-  addressNew.addEventListener("keydown", function (e) { if (e.key === "Enter") { e.preventDefault(); addAddress(); } });
-  form.addEventListener("change", function (e) { if (e.target.matches('.dmd-opt > input[type="checkbox"]')) { shade(); changed(); } });
-  form.addEventListener("input", function (e) {
-    var num = e.target.closest(".dmd-opt .dmd-num");
-    if (!num) return;
-    form.elements[num.getAttribute("data-for")].checked = true;
-    shade();
-    changed();
-  });
-  form.addEventListener("submit", function (e) { e.preventDefault(); });
+  if (full) {
+    $("dmd-address-add").addEventListener("click", addAddress);
+    addressNew.addEventListener("keydown", function (e) { if (e.key === "Enter") { e.preventDefault(); addAddress(); } });
+    form.addEventListener("change", function (e) { if (e.target.matches('.dmd-opt > input[type="checkbox"]')) { shade(); changed(); } });
+    form.addEventListener("input", function (e) {
+      var num = e.target.closest(".dmd-opt .dmd-num");
+      if (!num) return;
+      form.elements[num.getAttribute("data-for")].checked = true;
+      shade();
+      changed();
+    });
+    form.addEventListener("submit", function (e) { e.preventDefault(); });
+  }
 
   function problem(input) {
     var what = input.getAttribute("aria-label") || "a figure";
@@ -290,7 +303,8 @@
     }).then(function (r) {
       on = true; note = ""; items = r.items || [];
       fillForm(r.prefs || readForm());
-      say("Notifications are on for this device. Send yourself a test notice to check.");
+      say(full ? "Notifications are on for this device. Send yourself a test notice to check."
+        : "Notifications are on for this device, with the usual choices: change them in the notification settings.");
     }).catch(function (err) {
       note = ""; say((err && err.message) || "Something went wrong. Try again in a moment.", true);
     }).then(function () { busy = false; draw(); });
@@ -349,13 +363,14 @@
       li.appendChild(b);
       list.appendChild(li);
     });
-    empty.hidden = news.length > 0 && !note;
+    empty.hidden = news.length > 0 && !note && !told;
     var why = "";
     if (!can && iphone && !inApp) why = 'On an iPhone, notifications come through the app: <a href="#get-the-app">add it to your Home Screen</a>, open it, and turn them on there.';
     else if (!can) why = "This browser cannot show notifications.";
     else if (blocked()) why = "Notifications are blocked for this site in your browser settings.";
     else if (loaded && config && !config.enabled) why = "Notifications are not available right now.";
     if (note) empty.textContent = note;
+    else if (told) empty.textContent = told;
     else if (!loaded) empty.textContent = "Loading…";
     else if (on) empty.textContent = "You're all caught up.";
     else if (why) empty.innerHTML = why;
@@ -363,10 +378,15 @@
     all.hidden = news.length < 2;
     var possible = loaded && can && !blocked() && config && config.enabled;
     actions.hidden = on || !possible;
-    bellOn.disabled = turnOn.disabled = busy;
-    bellOff.hidden = bellTest.hidden = turnOff.hidden = test.hidden = !on;
-    bellOff.disabled = turnOff.disabled = busy;
-    bellTest.disabled = test.disabled = busy || testing;
+    bellOn.disabled = busy;
+    bellOff.hidden = bellTest.hidden = !on;
+    bellOff.disabled = busy;
+    bellTest.disabled = busy || testing;
+    if (!full) return;
+    turnOn.disabled = busy;
+    turnOff.hidden = test.hidden = !on;
+    turnOff.disabled = busy;
+    test.disabled = busy || testing;
     turnOn.hidden = on || !possible;
     badge.textContent = on ? "On" : "Off";
     badge.className = "dmd-badge" + (on ? " on" : "");
@@ -375,6 +395,7 @@
   function open(yes) {
     panel.hidden = !yes;
     bell.setAttribute("aria-expanded", yes ? "true" : "false");
+    if (!yes) told = "";	// a message from the bell is read once
     if (yes) draw();
   }
   function load() {
@@ -383,9 +404,11 @@
     return ready.then(function (c) {
       config = c;
       box.hidden = false;
-      var floor = c.transfer_floor_dmd || 1000, transfers = figureBox("transfers");
-      transfers.min = floor;
-      if (Number(transfers.value) < floor) transfers.value = floor * 10;
+      if (full) {
+        var floor = c.transfer_floor_dmd || 1000, transfers = figureBox("transfers");
+        transfers.min = floor;
+        if (Number(transfers.value) < floor) transfers.value = floor * 10;
+      }
       if (!can || !c.enabled) return { on: false };
       return navigator.serviceWorker.ready.then(function (reg) { return reg.pushManager.getSubscription(); }).then(function (s) {
         sub = s;
@@ -401,19 +424,22 @@
       draw();
     }).catch(function () { loaded = true; draw(); });
   }
-  function changedPicks() { fillPick(); }
+  function changedPicks() { if (full) fillPick(); }
 
   bell.addEventListener("click", function (event) { event.stopPropagation(); open(panel.hidden); });
   all.addEventListener("click", function (event) { event.stopPropagation(); keepSeen(seen().concat(items.map(function (i) { return i.id; }))); draw(); });
   bellOn.addEventListener("click", function (event) { event.stopPropagation(); start(); });
   bellOff.addEventListener("click", function (event) { event.stopPropagation(); stop(); });
   bellTest.addEventListener("click", function (event) { event.stopPropagation(); sendTest(); });
-  turnOn.addEventListener("click", start);
-  turnOff.addEventListener("click", stop);
-  test.addEventListener("click", sendTest);
+  if (full) {
+    turnOn.addEventListener("click", start);
+    turnOff.addEventListener("click", stop);
+    test.addEventListener("click", sendTest);
+  }
   document.addEventListener("click", function (event) { if (!panel.hidden && !box.contains(event.target)) open(false); });
   document.addEventListener("keydown", function (event) { if (event.key === "Escape" && !panel.hidden) { open(false); bell.focus(); } });
   settings.addEventListener("click", function (event) {
+    if (!full) return;	// the link goes to the card on the home page
     event.preventDefault();
     open(false);
     card.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -425,8 +451,11 @@
   if ("serviceWorker" in navigator) navigator.serviceWorker.addEventListener("message", function (event) {
     if (event.data && event.data.type === "dmd-stats-notice") load();
   });
-  shade();
-  fillPick();
+  if (full) {
+    shade();
+    fillPick();
+    if (location.hash === "#notifications") card.classList.add("dmd-flash");	// from another page's bell
+  }
   draw();
   setInterval(function () { if (!document.hidden) load(); }, 60000);
   load();

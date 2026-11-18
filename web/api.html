@@ -30,6 +30,15 @@
 <input type="checkbox" id="dmd-menu-toggle" class="dmd-menu-toggle" aria-label="Menu" aria-controls="dmd-menu">
 <label for="dmd-menu-toggle" class="dmd-menu-button" aria-hidden="true"><span></span></label>
 <button type="button" id="dmd-theme-toggle" class="dmd-theme-toggle" aria-label="Switch between the light and dark themes"><svg class="dmd-moon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M20.5 14.2A8.5 8.5 0 1 1 9.8 3.5a6.8 6.8 0 0 0 10.7 10.7z"/></svg><svg class="dmd-sun" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="4.5"/><path d="M12 2v2.2M12 19.8V22M4.9 4.9l1.6 1.6M17.5 17.5l1.6 1.6M2 12h2.2M19.8 12H22M4.9 19.1l1.6-1.6M17.5 6.5l1.6-1.6"/></svg></button>
+<div class="dmd-bellbox" id="dmd-bellbox" hidden>
+<button type="button" class="dmd-bell" id="dmd-bell" data-unread="0" aria-haspopup="true" aria-expanded="false" aria-controls="dmd-bell-panel" title="Notifications" aria-label="Notifications"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg><span class="dmd-bell-dot" aria-hidden="true"></span></button>
+<div class="dmd-bell-panel" id="dmd-bell-panel" role="region" aria-label="Notifications" hidden>
+<div class="dmd-bell-head"><b>Notifications</b><button type="button" class="dmd-bell-all" hidden>Mark all as seen</button></div>
+<ul class="dmd-bell-list"></ul><p class="dmd-bell-empty">Loading…</p>
+<div class="dmd-bell-actions" hidden><button type="button" class="dmd-button dmd-bell-on">Turn on notifications</button></div>
+<div class="dmd-bell-foot"><a class="dmd-bell-settings" href="/#notifications">Notification settings</a>
+<span class="dmd-bell-tools"><button type="button" class="dmd-bell-test" hidden>Send a test notice</button><button type="button" class="dmd-bell-off" hidden>Turn off</button></span></div>
+</div></div>
 <nav id="dmd-menu" class="dmd-nav" aria-label="DMD Stats">
 <a href="/">Network</a>
 <a href="/api/" class="on" aria-current="page">API</a>
@@ -148,6 +157,7 @@
 </div></div></dialog>
 
 <script src="/js/api.js?v=1"></script>
+<script src="/js/notify.js?v=4"></script>
 <script src="/js/install.js?v=1"></script>
 </body>
 </html>
