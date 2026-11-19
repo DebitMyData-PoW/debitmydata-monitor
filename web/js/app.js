@@ -153,7 +153,16 @@
       var bar = document.createElement("span"), fill = document.createElement("i");
       li.className = who.pool ? "pool" : "other";
       name.className = "who";
-      name.textContent = who.pool ? "DebitMyData pool" : who.name;
+      // (A pool of DebitMyData's list shows its logo: /pools/, as dmd-pools.timer keeps them.)
+      if (who.slug) {
+        var logo = document.createElement("img");
+        logo.className = "logo";
+        logo.alt = "";
+        logo.src = "/pools/" + encodeURIComponent(who.slug) + ".svg";
+        logo.onerror = function () { logo.remove(); };
+        name.appendChild(logo);
+      }
+      name.appendChild(document.createTextNode(who.pool ? "DebitMyData pool" : who.name));
       n.className = "n";
       n.textContent = percent(who.share) + " · " + who.blocks.toLocaleString("en-US") + " blocks";
       bar.className = "bar";

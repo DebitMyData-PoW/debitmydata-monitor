@@ -39,7 +39,7 @@ from typing import Any
 
 import psycopg
 
-from chainwatch import __version__, chain
+from chainwatch import __version__, chain, pools
 from chainwatch.checks import PUBLIC_POOL, miner_shares
 from chainwatch.sync import rich_list
 
@@ -405,6 +405,12 @@ def summary(
 
 
 def miners(conn: psycopg.Connection[Any], now: datetime) -> dict[str, Any]:
+    # (A pool of DebitMyData's list by its slug, for its logo: the DebitMyData pool is its
+    # "official".)
+    listed = pools.current().by_name()
+    official = next((p for p in listed.values() if p.slug == "official"), None)
+    if official is not None:
+        listed[PUBLIC_POOL] = official
     out = {}
     for name, days in (("24h", 1), ("7d", 7), ("30d", 30)):
         shares = miner_shares(conn, since=now - timedelta(days=days))
@@ -412,7 +418,13 @@ def miners(conn: psycopg.Connection[Any], now: datetime) -> dict[str, Any]:
         out[name] = {
             "blocks": shares["blocks"],
             "miners": [
-                {"name": who, "blocks": n, "share": round(n / total, 4), "pool": who == PUBLIC_POOL}
+                {
+                    "name": who,
+                    "blocks": n,
+                    "share": round(n / total, 4),
+                    "pool": who == PUBLIC_POOL,
+                    **({"slug": listed[who].slug} if who in listed else {}),
+                }
                 for who, n in sorted(shares["miners"].items(), key=lambda x: -x[1])
             ],
         }

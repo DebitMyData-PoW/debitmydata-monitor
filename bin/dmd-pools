@@ -1,0 +1,83 @@
+#!/usr/bin/env bash
+# DebitMyData's mining pools, kept up to date from GitHub: the list (DebitMyData-PoW/mining-pools,
+# pools-v2.json) and the logos (DebitMyData-PoW/mining-pool-logos). Every day (dmd-pools.timer).
+#
+# Edit those two repositories and, within a day, DMD Stats names the pools (by their coinbase text
+# or their addresses: chainwatch/pools.py) and shows their logos (/pools/). A changed list names
+# every block again (dmd-chainwatch-admin relabel).
+#
+# Nothing from GitHub runs here: the list must read as a list of pools, each logo as a plain
+# picture (no script, no link out, no embedded page). Anything else is left out, and what was
+# there before stays.
+set -euo pipefail
+
+DIR="${DMD_POOLS_DIR:-/var/lib/debitmydata-monitor/pools}"
+LIST=$DIR/pools-v2.json
+LOGOS=$DIR/logos
+RAW=https://raw.githubusercontent.com/DebitMyData-PoW
+WORK="$(mktemp -d)"
+trap 'rm -rf "$WORK"' EXIT
+
+mkdir -p "$LOGOS"
+fetch() { curl -fsSL --proto '=https' --max-time 60 --max-filesize 3000000 "$1" -o "$2"; }
+
+fetch "$RAW/mining-pools/master/pools-v2.json" "$WORK/pools-v2.json"
+python3 - "$WORK/pools-v2.json" >"$WORK/wanted" <<'PY'
+import json, re, sys
+pools = json.load(open(sys.argv[1]))
+assert isinstance(pools, list) and pools, "not a list of pools"
+for pool in pools:
+    assert isinstance(pool, dict) and isinstance(pool.get("name"), str) and re.search(r"[A-Za-z0-9]", pool["name"]), "a pool without a name"
+    for key in ("addresses", "tags"):
+        assert all(isinstance(v, str) for v in pool.get(key, [])), f"{pool['name']}: {key} must be text"
+    name = pool["name"].lower()
+    slug = re.sub(r"[^a-z0-9]", "", name)
+    # (Its logo: named as its slug, or the logos repository's name keeping the dashes.)
+    print(slug, re.sub(r"[^a-z0-9-]", "", name), slug)
+print("default default default")
+PY
+
+mkdir -p "$WORK/logos"
+while read -r slug first second; do
+    for name in "$first" "$second"; do
+        fetch "$RAW/mining-pool-logos/master/$name.svg" "$WORK/logos/$slug.svg" 2>/dev/null && break
+    done
+done <"$WORK/wanted"
+python3 - "$WORK/logos" <<'PY'
+import os, re, sys
+folder = sys.argv[1]
+unsafe = re.compile(rb"<script|<foreignobject|<iframe|<embed|<object|javascript:|\bon[a-z]+\s*=|(?:xlink:)?href\s*=\s*[\"'](?!#|data:image/)", re.I)
+for name in os.listdir(folder):
+    path = os.path.join(folder, name)
+    data = open(path, "rb").read()
+    bare = re.sub(rb"data:image/(?:png|jpeg|gif|webp);base64,[A-Za-z0-9+/=\s]*", b"data:image/", data)
+    if b"<svg" not in data[:4096].lower() or unsafe.search(bare):
+        print(f"left out: {name} (not a plain picture)", file=sys.stderr)
+        os.remove(path)
+PY
+
+# (A heavy logo, a picture inside, made small: 96 pixels, WebP, inside an SVG, as the pages draw it.)
+for file in "$WORK"/logos/*.svg; do
+    [ -e "$file" ] || continue
+    if [ "$(stat -c %s "$file")" -gt 150000 ] && command -v rsvg-convert >/dev/null &&
+        rsvg-convert -w 96 -h 96 --keep-aspect-ratio "$file" -o "$WORK/small.png" 2>/dev/null; then
+        # (WebP if cwebp is there, else the PNG.)
+        small=$WORK/small.png kind=png
+        if command -v cwebp >/dev/null && cwebp -quiet -q 88 "$WORK/small.png" -o "$WORK/small.webp" 2>/dev/null; then
+            small=$WORK/small.webp kind=webp
+        fi
+        printf '<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 96 96"><image width="96" height="96" xlink:href="data:image/%s;base64,%s"/></svg>\n' \
+            "$kind" "$(base64 -w0 "$small")" >"$file"
+    fi
+done
+for file in "$WORK"/logos/*.svg; do
+    [ -e "$file" ] && install -m 644 "$file" "$LOGOS/"
+done
+chmod 755 "$DIR" "$LOGOS"
+if cmp -s "$WORK/pools-v2.json" "$LIST" 2>/dev/null; then
+    echo "pools: no change"
+else
+    install -m 644 "$WORK/pools-v2.json" "$LIST"
+    echo "pools: the list changed; every block named again"
+    /usr/local/sbin/dmd-chainwatch-admin relabel || true
+fi

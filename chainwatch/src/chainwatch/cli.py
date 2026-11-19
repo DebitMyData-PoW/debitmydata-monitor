@@ -29,7 +29,19 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from chainwatch import __version__, alerts, api, db, events, market, notify, price, publish, push
+from chainwatch import (
+    __version__,
+    alerts,
+    api,
+    chain,
+    db,
+    events,
+    market,
+    notify,
+    price,
+    publish,
+    push,
+)
 from chainwatch.alerts import CRITICAL, WARNING, Finding, Message
 from chainwatch.checks import CHECKS, Context
 from chainwatch.config import Settings, load_cost_periods
@@ -340,6 +352,23 @@ def cmd_recompute(settings: Settings) -> int:
     return 0
 
 
+def cmd_relabel(settings: Settings) -> int:
+    """Every block named again by the pool list now (after dmd-pools.timer changed it)."""
+    conn = db.connect(settings.database_url)
+    with conn.transaction():
+        rows = conn.execute(
+            "SELECT height, pool, coinbase_tag, payouts, miner FROM blocks"
+        ).fetchall()
+        changed = []
+        for r in rows:
+            name = chain.miner_name(r["pool"], r["coinbase_tag"] or "", r["payouts"] or {})[:100]
+            if name != r["miner"]:
+                changed.append((name, r["height"]))
+        conn.cursor().executemany("UPDATE blocks SET miner = %s WHERE height = %s", changed)
+    print(f"{len(changed)} blocks named again")
+    return 0
+
+
 def cmd_test_alerts(settings: Settings) -> int:
     test = Finding(
         "test.alerts",
@@ -461,6 +490,7 @@ def main(argv: list[str] | None = None) -> int:
             "publish",
             "import-prices",
             "recompute-costs",
+            "relabel",
             "test-alerts",
             "status",
             "notify",
@@ -483,6 +513,7 @@ def main(argv: list[str] | None = None) -> int:
         "check": cmd_check,
         "publish": cmd_publish,
         "recompute-costs": cmd_recompute,
+        "relabel": cmd_relabel,
         "test-alerts": cmd_test_alerts,
         "status": cmd_status,
         "notify": cmd_notify,

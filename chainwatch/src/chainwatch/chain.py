@@ -15,6 +15,8 @@ from __future__ import annotations
 from collections.abc import Mapping
 from decimal import Decimal
 
+from chainwatch import pools
+
 BLOCK_SECONDS = 150
 DATA_PER_DMD = 100_000_000  # "data": the smallest unit
 INITIAL_SUBSIDY_DATA = 35 * DATA_PER_DMD
@@ -88,10 +90,14 @@ def market_cap_usd(usd_per_dmd: float | None, height: int) -> float | None:
 
 
 def miner_name(pool: bool, tag: str, paid: Mapping[str, int]) -> str:
-    """Who mined a block: the pool (its tag in the coinbase), else the last text the miner wrote in
-    the coinbase (a pool's name), else the address the coinbase paid most."""
+    """Who mined a block: the pool (its tag in the coinbase), else a pool of DebitMyData's list (its
+    tags, its addresses: pools.py), else the last text the miner wrote in the coinbase (a pool's
+    name), else the address the coinbase paid most."""
     if pool:
         return PUBLIC_POOL
+    known = pools.current().identify(tag, paid)
+    if known is not None:
+        return known.name
     if tag:
         return tag.split(" | ")[-1][:100] or "unknown"
     if paid:

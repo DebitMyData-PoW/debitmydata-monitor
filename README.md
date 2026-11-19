@@ -226,6 +226,8 @@ watch: the trading volume and the market price come in every 5 minutes, on the p
 | `wg show` | The tunnel to the pool server |
 | `sudo dmd-tor-check --status` | Tor: running, its version, connected, the node going through it |
 | `journalctl -u dmd-tor-check` | What the Tor check found and repaired |
+| `sudo systemctl start dmd-pools` | DebitMyData's pools and logos from GitHub now (else every day) |
+| `dmd-chainwatch-admin relabel` | Names every block again by the pool list (dmd-pools does it when the list changes) |
 
 ## Settings
 
@@ -239,6 +241,7 @@ watch: the trading volume and the market price come in every 5 minutes, on the p
 | `DMDW_PUBLIC_REORGS`, `DMDW_PUBLIC_CONCENTRATION` | `no` | Also tell the community about reorganizations, and about one miner with too large a share |
 | `DMDW_POOL_ADDRESSES` | | The pool's own addresses |
 | `DMDW_POOL_TAG` | `Official` | The text the pool writes in its blocks |
+| `DMDW_POOLS_FILE` | `/var/lib/debitmydata-monitor/pools/pools-v2.json` | DebitMyData's pool list, as `dmd-pools.timer` keeps it from GitHub |
 | `DMDW_POOL_VIEW` | `no` | Compare with the pool's node (`add-pool.sh` sets it to `yes`) |
 | `DMDW_STALL_WARNING_MINUTES`, `DMDW_STALL_CRITICAL_MINUTES` | `30`, `60` | No new block |
 | `DMDW_OUTSIDE_MINER_SHARE` | `0.25` | A miner outside the pool, share of the last 144 blocks |

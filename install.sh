@@ -86,7 +86,7 @@ chmod 600 "$CERT_KEY"
 step "Installing packages"
 export DEBIAN_FRONTEND=noninteractive NEEDRESTART_SUSPEND=1
 apt-get update -q
-apt-get install -y -q --no-install-recommends nginx postgresql python3-venv ufw jq curl \
+apt-get install -y -q --no-install-recommends nginx postgresql python3-venv ufw jq curl librsvg2-bin webp \
     gnupg ca-certificates wireguard-tools prometheus prometheus-node-exporter \
     libevent-core-2.1-7t64 libevent-extra-2.1-7t64 libevent-pthreads-2.1-7t64 libsqlite3-0 libzmq5 >/dev/null
 missing="$(ldd /usr/local/bin/debitmydatad | grep 'not found' || true)"
@@ -260,13 +260,15 @@ exec systemd-run --quiet --pipe --wait --collect --uid=dmdwatch --gid=dmdwatch \
 EOF
 chmod 755 /usr/local/sbin/dmd-chainwatch-admin
 chmod 755 "$APP/bin/dmd-watchdog"
-for unit in dmd-chainwatch.service dmd-notify.service dmd-watchdog.service dmd-watchdog.timer; do
+for unit in dmd-chainwatch.service dmd-notify.service dmd-watchdog.service dmd-watchdog.timer dmd-pools.service dmd-pools.timer; do
     install -m 644 "$APP/config/systemd/$unit" "/etc/systemd/system/$unit"
 done
 systemctl daemon-reload
-systemctl enable dmd-chainwatch dmd-notify dmd-watchdog.timer >/dev/null
+systemctl enable dmd-chainwatch dmd-notify dmd-watchdog.timer dmd-pools.timer >/dev/null
 systemctl restart dmd-chainwatch dmd-notify
-systemctl start dmd-watchdog.timer
+systemctl start dmd-watchdog.timer dmd-pools.timer
+# DebitMyData's pools and their logos from GitHub now, then every day (bin/dmd-pools)
+"$APP/bin/dmd-pools" || echo "The pools couldn't be read from GitHub now: dmd-pools.timer tries again."
 
 # ------------------------------------------------------------------ Prometheus
 step "Prometheus and node_exporter"

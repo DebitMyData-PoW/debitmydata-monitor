@@ -1,0 +1,11 @@
+[Unit]
+Description=DebitMyData's mining pools: their list and logos from GitHub (bin/dmd-pools)
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/debitmydata-monitor/bin/dmd-pools
+PrivateTmp=yes
+ProtectHome=yes
+ProtectSystem=full

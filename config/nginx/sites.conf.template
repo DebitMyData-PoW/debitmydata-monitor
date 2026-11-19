@@ -63,6 +63,15 @@ server {
         include snippets/debitmydata-headers.conf;
         include snippets/debitmydata-stats-csp.conf;
     }
+    # The pools' logos, as dmd-pools.timer keeps them from GitHub (bin/dmd-pools): pictures only.
+    location /pools/ {
+        alias /var/lib/debitmydata-monitor/pools/logos/;
+        types { image/svg+xml svg; }
+        default_type application/octet-stream;
+        add_header Cache-Control "public, max-age=3600" always;
+        add_header Content-Security-Policy "default-src 'none'; img-src data:; style-src 'unsafe-inline'; sandbox" always;
+        add_header X-Content-Type-Options "nosniff" always;
+    }
     # The notifications: the chain watch's notifications service (dmd-notify.service)
     location = /push {
         limit_req zone=dmd_push burst=20 nodelay;
