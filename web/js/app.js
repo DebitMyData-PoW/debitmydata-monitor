@@ -387,7 +387,7 @@
     var phone = window.innerWidth < 760;
     var options = {
       chart: { id: "dmd-main", type: types[0] === "candlestick" ? "candlestick" : types[0], height: phone ? 300 : 360, foreColor: c.fore,
-        fontFamily: "Mada, system-ui, sans-serif", toolbar: { show: false }, zoom: { enabled: false }, animations: { enabled: false },
+        fontFamily: "Inter, system-ui, sans-serif", toolbar: { show: false }, zoom: { enabled: false }, animations: { enabled: false },
         background: "transparent" },
       series: series,
       colors: def.colours(c),
@@ -569,7 +569,7 @@
   function dark() { return root.getAttribute("data-theme") === "dark"; }
   function label() {
     var meta = document.querySelector('meta[name="theme-color"]');
-    if (meta) meta.setAttribute("content", dark() ? "#1d1d23" : "#ffffff");
+    if (meta) meta.setAttribute("content", dark() ? "#0b0a0f" : "#ffffff");
     toggle.setAttribute("aria-label", dark() ? "Switch to the light theme" : "Switch to the dark theme");
     toggle.title = dark() ? "Light theme" : "Dark theme";
   }

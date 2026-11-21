@@ -12,9 +12,10 @@
   root.style.colorScheme = t;
   window.dmdChartTheme = function () {
     var dark = root.getAttribute("data-theme") === "dark";
-    return { fore: dark ? "#9a9ba6" : "#7d8797", grid: dark ? "#2c2c35" : "#f0f1f4", tooltip: dark ? "dark" : "light",
-      red: dark ? "#ff5a64" : "#c80815", gold: dark ? "#e6b422" : "#c99a06", green: dark ? "#2fbf7a" : "#098551",
-      zoom: dark ? "#64748b" : "#94a3b8" };	// the zoom bar: discreet, under the chart
+    // The Aurora design's colours (css/aurora.css).
+    return { fore: dark ? "#8f8a9b" : "#6e6a78", grid: dark ? "#25222d" : "#f1eff4", tooltip: dark ? "dark" : "light",
+      red: dark ? "#ff3348" : "#e0112b", gold: dark ? "#f0b429" : "#c99a06", green: dark ? "#22c55e" : "#16a34a",
+      zoom: dark ? "#6b6577" : "#a9a4b3" };	// the zoom bar: discreet, under the chart
   };
 
   try {

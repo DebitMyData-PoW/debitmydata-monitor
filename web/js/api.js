@@ -6,7 +6,7 @@
   function dark() { return root.getAttribute("data-theme") === "dark"; }
   function label() {
     var meta = document.querySelector('meta[name="theme-color"]');
-    if (meta) meta.setAttribute("content", dark() ? "#1d1d23" : "#ffffff");
+    if (meta) meta.setAttribute("content", dark() ? "#0b0a0f" : "#ffffff");
     toggle.setAttribute("aria-label", dark() ? "Switch to the light theme" : "Switch to the dark theme");
     toggle.title = dark() ? "Light theme" : "Dark theme";
   }

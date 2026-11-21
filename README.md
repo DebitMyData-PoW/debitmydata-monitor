@@ -18,6 +18,7 @@ On one Ubuntu 24.04 server:
   exchanges' figures once DMD trades on one), compares its own node with the other views of the
   chain, and sends the alerts.
 - **DMD Stats** (`web/`): the public page, [stats.debitmydata.io](https://stats.debitmydata.io),
+  in DebitMyData's Aurora design (`web/css/aurora.css`, the same as debitmydata.io's),
   with CoinMarketCap-style charts since block 1 (lines or candles, from 15 minutes to everything,
   with a zoom bar), notifications that each visitor chooses, and an API
   ([stats.debitmydata.io/api/](https://stats.debitmydata.io/api/)). It installs as an app on
@@ -352,5 +353,5 @@ DebitMyData node on regtest (a private test chain). The Grafana dashboards are w
 
 ## License
 
-MIT. Mada font: SIL Open Font License (`web/fonts/OFL-Mada.txt`). ApexCharts: MIT
-(`web/vendor/LICENSE-apexcharts.txt`).
+MIT. Fonts: SIL Open Font License (`web/fonts/OFL-Sora.txt`, `OFL-Inter.txt`,
+`OFL-JetBrainsMono.txt`, `OFL-Mada.txt`). ApexCharts: MIT (`web/vendor/LICENSE-apexcharts.txt`).

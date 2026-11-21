@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<script src="/js/early.js?v=2"></script>
+<script src="/js/early.js?v=3"></script>
 <title>DMD Stats</title>
 <link rel="manifest" href="/manifest.json">
 <meta name="mobile-web-app-capable" content="yes">
@@ -21,8 +21,10 @@
 <meta property="og:description" content="Hashrate, difficulty, mining cost and the reference price of DMD, the DebitMyData coin, since block 1.">
 <meta property="og:image" content="https://stats.debitmydata.io/images/app/icon-512.png?v=1">
 <meta property="og:url" content="https://stats.debitmydata.io/">
-<link rel="preload" href="/fonts/mada-latin-800-normal.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="/fonts/inter-wght.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="/fonts/sora-wght.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="/css/stats.css?v=6">
+<link rel="stylesheet" href="/css/aurora.css?v=1">
 </head>
 <body class="dmd" id="top">
 <header class="dmd-topbar"><div class="dmd-in">
@@ -51,7 +53,7 @@
 <section class="dmd-hero">
 <div>
 <p class="dmd-eyebrow">Live network</p>
-<h1><span class="dmd-h1-first"><img class="dmd-h1-coin" src="/images/dmd-coin-64.png" srcset="/images/dmd-coin-64.png 1x, /images/dmd-coin-128.png 2x" width="64" height="64" alt="">DebitMyData</span> <span class="dmd-h1-red">Stats</span></h1>
+<h1><span class="dmd-h1-first">DebitMyData</span> <span class="dmd-h1-red">Stats</span></h1>
 <p class="dmd-lead">The DebitMyData Proof-of-Work chain, live and since block 1: its hashrate and difficulty, its volume and market cap, what it costs to mine DMD (the DebitMyData coin), and DebitMyData's reference price. With notifications, and an API.</p>
 </div>
 <div class="dmd-status" aria-live="polite">
@@ -253,7 +255,7 @@
 </div></div></dialog>
 
 <script src="/vendor/apexcharts-3.54.1.min.js"></script>
-<script src="/js/app.js?v=4"></script>
+<script src="/js/app.js?v=5"></script>
 <script src="/js/notify.js?v=4"></script>
 <script src="/js/install.js?v=1"></script>
 </body>
