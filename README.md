@@ -292,8 +292,11 @@ Settings added by a new version are added at the end of `monitor.env`, with thei
 The page's files are its API, explained at `https://stats.debitmydata.io/api/`: `summary.json`,
 `chart-<range>.json` (`15m`, `1h`, `4h`, `24h`, `7d`, `30d`, `1y`, `all`, with points and
 candles), `miners.json`, `blocks.json` (the last 1,000 blocks and who found each, for
-[DMD Mining](https://mining.debitmydata.io)), `transfers.json`, `richlist.json`, `dmd-daily.csv` and
-`dmd-blocks.csv`. Any website may read them.
+[DMD Mining](https://mining.debitmydata.io)), `transfers.json`, `richlist.json`, `dmd-daily.csv`,
+`dmd-blocks.csv`, and for exchanges and listing sites `coin.json` (the coin's facts and figures in
+one file) with `circulating-supply.txt` and `total-supply.txt` (plain numbers, as CoinGecko and
+CoinMarketCap read a supply). Any website may read them; [DebitMyData Docs](https://docs.debitmydata.io/api/coin-data/)
+explains them for third parties.
 
 ## The app
 

@@ -101,6 +101,27 @@ def test_the_stats_files(
     richlist = json.loads((api / "richlist.json").read_text())
     assert richlist["ready"] and richlist["addresses"][0]["address"] == POOL_ADDRESS
 
+    coin = json.loads((api / "coin.json").read_text())
+    assert coin["ticker"] == "DMD" and coin["decimals"] == 8 and coin["algorithm"] == "SHA-256"
+    assert coin["height"] == summary["height"] and coin["hashrate"] == summary["hashrate_24h"]
+    assert coin["blocks_to_next_halving"] == 300_000 - summary["height"]
+    assert coin["supply"]["circulating_dmd"] == summary["height"] * 35
+    assert coin["supply"]["total_dmd"] == coin["supply"]["circulating_dmd"]
+    assert coin["supply"]["max_dmd"] is None
+    assert coin["supply"]["per_cycle_dmd"] == 20_999_999.964
+    assert coin["price"] == {
+        "listed": False,
+        "market_usd": None,
+        "reference_usd": 0.001,
+        "reference_from": "minimum",
+    }
+    assert coin["market_cap_from"] == "reference_price"
+    assert coin["market_cap_usd"] == round(summary["height"] * 35 * 0.001, 2)
+    # the plain numbers CoinGecko and CoinMarketCap read: no exponent, no separator
+    circulating = (api / "circulating-supply.txt").read_text()
+    assert circulating == str(summary["height"] * 35)
+    assert (api / "total-supply.txt").read_text() == circulating
+
     miners = json.loads((api / "miners.json").read_text())
     assert miners["24h"]["miners"][0] == {
         "name": "the DebitMyData pool",
@@ -178,3 +199,10 @@ def test_the_exchanges_figures(
     assert summary["market"]["price_usd"] == 0.0021
     day = json.loads((tmp_path / "api" / "chart-24h.json").read_text())
     assert day["points"][-1][day["fields"].index("trading_volume_24h")] == 15234.5
+
+
+def test_plain_dmd() -> None:
+    assert publish.plain_dmd(533_515_500_000_000) == "5335155"
+    assert publish.plain_dmd(533_515_550_000_000) == "5335155.5"
+    assert publish.plain_dmd(1) == "0.00000001"
+    assert publish.plain_dmd(0) == "0"

@@ -10,6 +10,10 @@ and Cloudflare caches them for a minute. The page's API (stats.debitmydata.io/ap
   api/blocks.json             the last 1,000 blocks and who found each (DMD Mining reads it)
   api/transfers.json          the large transfers of the last week
   api/richlist.json           the 100 addresses with the most DMD (the monitor's own count)
+  api/coin.json               the coin's basic facts and figures in one file, for exchanges and
+                              listing sites (supply, market cap, hashrate, difficulty, reward)
+  api/circulating-supply.txt  the DMD in circulation, as a plain number (CoinGecko and
+  api/total-supply.txt        CoinMarketCap read these); the total supply, the same number
   api/dmd-daily.csv           one line per day since block 1 (for spreadsheets)
   api/dmd-blocks.csv          one line per block (rewritten once an hour)
 
@@ -594,6 +598,86 @@ def transfers(conn: psycopg.Connection[Any], now: datetime, floor: float) -> dic
     }
 
 
+# Every cycle's 32 halvings, block by block: 20,999,999.964 DMD.
+SUPPLY_PER_CYCLE_DATA = sum(
+    (chain.INITIAL_SUBSIDY_DATA >> k) * chain.HALVING_BLOCKS
+    for k in range(chain.SUBSIDY_CYCLE_BLOCKS // chain.HALVING_BLOCKS)
+)
+
+
+def plain_dmd(data: int) -> str:
+    """An amount as a plain number of DMD, the way listing sites read a supply: no exponent, no
+    thousands separator, no trailing zeros (5335155, or 5335155.5)."""
+    whole, rest = divmod(data, chain.DATA_PER_DMD)
+    return f"{whole}.{rest:08d}".rstrip("0") if rest else str(whole)
+
+
+def coin(s: dict[str, Any]) -> dict[str, Any]:
+    """The coin's basic facts and live figures in one file, from the summary, for exchanges,
+    listing sites and anyone who wants them without the stats page's other fields.
+
+    The supply is every block's reward since block 1 (DMD had no pre-mine and nothing is
+    locked, so the circulating and total supplies are the same). There is no maximum: the
+    reward starts a new cycle after 32 halvings, so ``max_dmd`` is null and ``per_cycle_dmd``
+    says how much one cycle makes. The market cap uses the market price once DMD trades on an
+    exchange, and the reference price until then (``market_cap_from`` says which), to the cent
+    (the summary's figures keep 6 significant digits, enough for the page)."""
+    mined = s["coins_mined_dmd"]
+    market = s["market"]
+    reference = s["reference_price"]
+    if market["listed"] and market["price_usd"] is not None:
+        cap, cap_from = round(market["price_usd"] * mined, 2), "market_price"
+    elif reference:
+        cap, cap_from = round(reference["usd_per_dmd"] * mined, 2), "reference_price"
+    else:
+        cap, cap_from = None, None
+    return {
+        "updated_at": s["updated_at"],
+        "name": "DebitMyData PoW",
+        "ticker": "DMD",
+        "algorithm": "SHA-256",
+        "decimals": 8,
+        "block_time_seconds": chain.BLOCK_SECONDS,
+        "coinbase_maturity_blocks": chain.COINBASE_MATURITY,
+        "height": s["height"],
+        "last_block": s["last_block"],
+        "difficulty": s["difficulty"],
+        "hashrate": s["hashrate_24h"],
+        "block_reward_dmd": s["block_reward_dmd"],
+        "next_halving_height": s["next_halving_height"],
+        "blocks_to_next_halving": s["next_halving_height"] - s["height"],
+        "supply": {
+            "circulating_dmd": mined,
+            "total_dmd": mined,
+            "max_dmd": None,
+            "per_cycle_dmd": SUPPLY_PER_CYCLE_DATA / chain.DATA_PER_DMD,
+            "halving_blocks": chain.HALVING_BLOCKS,
+            "cycle_blocks": chain.SUBSIDY_CYCLE_BLOCKS,
+        },
+        "price": {
+            "listed": market["listed"],
+            "market_usd": market["price_usd"],
+            "reference_usd": reference["usd_per_dmd"] if reference else None,
+            "reference_from": reference["price_from"] if reference else None,
+        },
+        "market_cap_usd": cap,
+        "market_cap_from": cap_from,
+        "trading_volume_24h_usd": market["trading_volume_24h_usd"],
+        "chain_normal": s["status"]["normal"],
+        "links": {
+            "website": "https://debitmydata.io/",
+            "docs": "https://docs.debitmydata.io/api/coin-data/",
+            "rich_list": "https://stats.debitmydata.io/api/richlist.json",
+            "explorers": [
+                "https://mempool.debitmydata.io/",
+                "https://chain.debitmydata.io/",
+                "https://explorer.debitmydata.io/",
+            ],
+            "source_code": "https://github.com/DebitMyData-PoW/DebitMyData-PoW-Core",
+        },
+    }
+
+
 def richlist(conn: psycopg.Connection[Any], pool_addresses: list[str]) -> dict[str, Any]:
     """The 100 addresses with the most DMD, from the monitor's own count of every block."""
     rows = rich_list(conn, 100)
@@ -650,10 +734,12 @@ def publish(
         if every and not blocks_csv_too and path.exists() and t - path.stat().st_mtime < every:
             continue
         _write(path, json.dumps(chart(c, p, name, t, m), separators=(",", ":")))
-    _write(
-        api / "summary.json",
-        json.dumps(summary(conn, c, p, t, public_status(conn), m, market_source), indent=1),
-    )
+    s = summary(conn, c, p, t, public_status(conn), m, market_source)
+    _write(api / "summary.json", json.dumps(s, indent=1))
+    _write(api / "coin.json", json.dumps(coin(s), indent=1))
+    mined = plain_dmd(chain.coins_mined_data(s["height"]))
+    _write(api / "circulating-supply.txt", mined)
+    _write(api / "total-supply.txt", mined)
     _write(api / "miners.json", json.dumps(miners(conn, now), indent=1))
     _write(api / "blocks.json", json.dumps(latest_blocks(conn), separators=(",", ":")))
     _write(api / "transfers.json", json.dumps(transfers(conn, now, large_transfer_dmd), indent=1))

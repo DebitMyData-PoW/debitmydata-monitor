@@ -57,7 +57,7 @@ server {
     }
     location /api/ {
         alias /var/lib/debitmydata-monitor/public/api/;
-        types { application/json json; text/csv csv; }
+        types { application/json json; text/csv csv; text/plain txt; }
         add_header Cache-Control "public, max-age=60" always;
         add_header Access-Control-Allow-Origin "*" always;
         include snippets/debitmydata-headers.conf;
