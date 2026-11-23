@@ -7,16 +7,17 @@
   "use strict";
   var root = document.documentElement;
   var KEPT = "dmd-stats-chart";
-  var state = { metric: "hashrate", range: "30d", style: "line", volume: "exchanges", minerRange: "24h",
+  var state = { metric: "hashrate", range: "24h", style: "line", volume: "exchanges", minerRange: "24h",
     summary: null, charts: {}, miners: null, zoom: null };
   try {
+    // (The period starts at 24H on every visit; the chart, its style and the volume shown are kept.)
     var kept = JSON.parse(localStorage.getItem(KEPT) || "{}");
-    ["metric", "range", "style", "volume"].forEach(function (k) { if (typeof kept[k] === "string") state[k] = kept[k]; });
+    ["metric", "style", "volume"].forEach(function (k) { if (typeof kept[k] === "string") state[k] = kept[k]; });
   } catch (e) {}
   var main = null, brush = null, current = null;
   function $(id) { return document.getElementById(id); }
   function keep() {
-    try { localStorage.setItem(KEPT, JSON.stringify({ metric: state.metric, range: state.range, style: state.style, volume: state.volume })); } catch (e) {}
+    try { localStorage.setItem(KEPT, JSON.stringify({ metric: state.metric, style: state.style, volume: state.volume })); } catch (e) {}
   }
 
   // ------------------------------------------------------------------ formats
@@ -304,7 +305,7 @@
       return { min: low, max: high, tickAmount: high - low, labels: labels };
     }
     var anyBar = series.some(function (s) { return s.type === "bar"; });
-    // A flat line (often on 1M: no new block within a minute): an axis around it, not one label
+    // A flat line (no new block in the period): an axis around it, not one label
     if (values.length && !anyBar) {
       var top = Math.max.apply(null, values), bottom = Math.min.apply(null, values);
       if (top - bottom <= Math.abs(top) * 0.005) {
@@ -335,7 +336,7 @@
       : short() ? { hour: "2-digit", minute: "2-digit", second: "2-digit" }
       : { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" };
   }
-  function short() { return state.range === "1m" || state.range === "15m"; }
+  function short() { return state.range === "15m"; }
 
   // The newest point of a series: now (the live value), as {x, y}; a candle's close.
   function lastPoint(s) {
@@ -353,7 +354,25 @@
     if (main) { main.destroy(); main = null; }
   }
 
+  // "Now 14.6 TH/s": the chart's figure this moment (the hashrate: the last hour's), from the summary
+  function showNow() {
+    var s = state.summary, box = $("dmd-chart-now"), v = null, format = null;
+    if (s) {
+      if (state.metric === "hashrate") { v = s.hashrate_1h; format = hashrate; }
+      else if (state.metric === "price") { v = s.reference_price && s.reference_price.usd_per_dmd; format = usd; }
+      else if (state.metric === "cap") { v = s.market_cap_usd; format = usdBig; }
+      else if (state.metric === "difficulty") { v = s.difficulty; format = bigNumber; }
+    }
+    box.hidden = v === null || v === undefined;
+    if (box.hidden) return;
+    box.textContent = "Now ";
+    var b = document.createElement("b");
+    b.textContent = format(v);
+    box.appendChild(b);
+  }
+
   function controls() {
+    showNow();
     var def = METRICS[state.metric];
     $("dmd-styles").hidden = !def.candles;
     $("dmd-volumes").hidden = state.metric !== "volume";
@@ -619,7 +638,7 @@
 
   // ------------------------------------------------------------------ loading, and every minute
   if (!METRICS[state.metric]) state.metric = "hashrate";
-  if (!document.querySelector('#dmd-ranges [data-range="' + state.range + '"]')) state.range = "30d";
+  if (!document.querySelector('#dmd-ranges [data-range="' + state.range + '"]')) state.range = "24h";
   controls();
   function refresh() {
     var range = state.range;

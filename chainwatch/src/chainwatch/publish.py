@@ -4,9 +4,10 @@ The stats page (stats.debitmydata.io) is static: nginx serves these files from t
 and Cloudflare caches them for a minute. The page's API (stats.debitmydata.io/api/) explains them.
 
   api/summary.json            the latest figures, with their changes over a day
-  api/chart-<range>.json      the chart points and candles of a range: 1m, 15m, 1h, 4h, 24h, 7d,
-                              30d, 1y, all (30d, 1y and all are written again every 10 minutes)
+  api/chart-<range>.json      the chart points and candles of a range: 15m, 1h, 4h, 24h, 7d, 30d,
+                              1y, all (30d, 1y and all are written again every 10 minutes)
   api/miners.json             who found the last day's, week's and month's blocks
+  api/blocks.json             the last 1,000 blocks and who found each (DMD Mining reads it)
   api/transfers.json          the large transfers of the last week
   api/richlist.json           the 100 addresses with the most DMD (the monitor's own count)
   api/dmd-daily.csv           one line per day since block 1 (for spreadsheets)
@@ -46,7 +47,6 @@ from chainwatch.sync import rich_list
 DAY = 86400
 RANGES = {
     # name: (span in seconds or None for everything, step, hashrate window)
-    "1m": (60, 5, 3600),
     "15m": (900, 30, 3600),
     "1h": (3600, 60, 3600),
     "4h": (4 * 3600, 300, 3600),
@@ -432,6 +432,44 @@ def miners(conn: psycopg.Connection[Any], now: datetime) -> dict[str, Any]:
     return out
 
 
+LATEST_BLOCKS = 1000
+
+
+def latest_blocks(conn: psycopg.Connection[Any], count: int = LATEST_BLOCKS) -> dict[str, Any]:
+    """The last blocks, newest first, each with who found it as the miners list names them
+    (miners.json): DMD Mining (mining.debitmydata.io) follows the pools with it."""
+    listed = pools.current().by_name()
+    official = next((p for p in listed.values() if p.slug == "official"), None)
+    if official is not None:
+        listed[PUBLIC_POOL] = official
+    rows = conn.execute(
+        "SELECT height, time, hash, difficulty, tx_count, size, pool, coinbase_tag, miner, "
+        "fees_data FROM blocks ORDER BY height DESC LIMIT %s",
+        (count,),
+    ).fetchall()
+    out = []
+    for r in rows:
+        who = r["miner"] or ""
+        fees = r["fees_data"]
+        reward = chain.subsidy_data(r["height"]) + (fees or 0)
+        out.append(
+            {
+                "height": r["height"],
+                "time": int(r["time"].timestamp()),
+                "hash": r["hash"],
+                "difficulty": float(r["difficulty"]),
+                "miner": who,
+                "slug": listed[who].slug if who in listed else None,
+                "pool": bool(r["pool"]),
+                "coinbase_text": r["coinbase_tag"] or "",
+                "transactions": r["tx_count"],
+                "size": r["size"],
+                "reward_dmd": _dmd(reward) if fees is not None else None,
+            }
+        )
+    return {"blocks": out, "count": len(out)}
+
+
 def daily_csv(c: Chain, p: Prices, now: int) -> str:
     out = io.StringIO()
     w = csv.writer(out, lineterminator="\n")
@@ -617,6 +655,7 @@ def publish(
         json.dumps(summary(conn, c, p, t, public_status(conn), m, market_source), indent=1),
     )
     _write(api / "miners.json", json.dumps(miners(conn, now), indent=1))
+    _write(api / "blocks.json", json.dumps(latest_blocks(conn), separators=(",", ":")))
     _write(api / "transfers.json", json.dumps(transfers(conn, now, large_transfer_dmd), indent=1))
     _write(api / "richlist.json", json.dumps(richlist(conn, pool_addresses or []), indent=1))
     _write(api / "dmd-daily.csv", daily_csv(c, p, t))

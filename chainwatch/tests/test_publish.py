@@ -89,11 +89,15 @@ def test_the_stats_files(
     assert candle[1:] == [1000.0, 1000.0, 1000.0, 1000.0]
     for _, o, h, low, c in day["candles"]["hashrate"]:
         assert low <= min(o, c) and h >= max(o, c)
+    latest = json.loads((api / "blocks.json").read_text())["blocks"]
+    assert len(latest) == 1000 and latest[0]["height"] == 576 * 3 + 9
+    assert latest[0]["miner"] == "SoloMiner" and latest[0]["reward_dmd"] == 35
+    assert latest[-1]["height"] == latest[0]["height"] - 999
+    assert latest[10]["pool"] and latest[10]["miner"] == "the DebitMyData pool"
+    assert latest[0]["time"] == now - 30 and latest[0]["hash"] == node.blocks[-1]["hash"]
     quarter = json.loads((api / "chart-15m.json").read_text())
     assert quarter["step"] == 30 and len(quarter["points"]) >= 30
-    minute = json.loads((api / "chart-1m.json").read_text())
-    assert minute["step"] == 5 and len(minute["points"]) >= 12
-    assert minute["points"][-1][0] == now and minute["points"][0][0] >= now - 60
+    assert quarter["points"][-1][0] == now  # the last point is now: the chart's live dot
     richlist = json.loads((api / "richlist.json").read_text())
     assert richlist["ready"] and richlist["addresses"][0]["address"] == POOL_ADDRESS
 

@@ -290,8 +290,9 @@ Settings added by a new version are added at the end of `monitor.env`, with thei
   the address a block paid when it has no text.
 
 The page's files are its API, explained at `https://stats.debitmydata.io/api/`: `summary.json`,
-`chart-<range>.json` (`1m`, `15m`, `1h`, `4h`, `24h`, `7d`, `30d`, `1y`, `all`, with points and
-candles), `miners.json`, `transfers.json`, `richlist.json`, `dmd-daily.csv` and
+`chart-<range>.json` (`15m`, `1h`, `4h`, `24h`, `7d`, `30d`, `1y`, `all`, with points and
+candles), `miners.json`, `blocks.json` (the last 1,000 blocks and who found each, for
+[DMD Mining](https://mining.debitmydata.io)), `transfers.json`, `richlist.json`, `dmd-daily.csv` and
 `dmd-blocks.csv`. Any website may read them.
 
 ## The app

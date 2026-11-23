@@ -23,7 +23,7 @@
 <meta property="og:url" content="https://stats.debitmydata.io/">
 <link rel="preload" href="/fonts/inter-wght.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="preload" href="/fonts/sora-wght.woff2" as="font" type="font/woff2" crossorigin>
-<link rel="stylesheet" href="/css/stats.css?v=7">
+<link rel="stylesheet" href="/css/stats.css?v=8">
 <link rel="stylesheet" href="/css/aurora.css?v=1">
 </head>
 <body class="dmd" id="top">
@@ -90,6 +90,7 @@
 <button type="button" class="dmd-tab" data-metric="blocktime" aria-pressed="false">Block time</button>
 </div>
 </div>
+<p class="dmd-chart-now" id="dmd-chart-now" hidden></p>
 <div class="dmd-chart-bar">
 <div class="dmd-legend" id="dmd-legend"></div>
 <div class="dmd-chart-tools">
@@ -102,13 +103,12 @@
 <button type="button" class="dmd-tab" data-volume="chain" aria-pressed="false">On chain</button>
 </div>
 <div class="dmd-tabs dmd-ranges" role="group" aria-label="Period" id="dmd-ranges">
-<button type="button" class="dmd-tab" data-range="1m" aria-pressed="false">1M</button>
 <button type="button" class="dmd-tab" data-range="15m" aria-pressed="false">15M</button>
 <button type="button" class="dmd-tab" data-range="1h" aria-pressed="false">1H</button>
 <button type="button" class="dmd-tab" data-range="4h" aria-pressed="false">4H</button>
-<button type="button" class="dmd-tab" data-range="24h" aria-pressed="false">24H</button>
+<button type="button" class="dmd-tab" data-range="24h" aria-pressed="true">24H</button>
 <button type="button" class="dmd-tab" data-range="7d" aria-pressed="false">7D</button>
-<button type="button" class="dmd-tab" data-range="30d" aria-pressed="true">30D</button>
+<button type="button" class="dmd-tab" data-range="30d" aria-pressed="false">30D</button>
 <button type="button" class="dmd-tab" data-range="1y" aria-pressed="false">1Y</button>
 <button type="button" class="dmd-tab" data-range="all" aria-pressed="false">ALL</button>
 </div>
@@ -256,7 +256,7 @@
 </div></div></dialog>
 
 <script src="/vendor/apexcharts-3.54.1.min.js"></script>
-<script src="/js/app.js?v=6"></script>
+<script src="/js/app.js?v=7"></script>
 <script src="/js/notify.js?v=4"></script>
 <script src="/js/install.js?v=1"></script>
 </body>
