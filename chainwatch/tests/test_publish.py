@@ -91,6 +91,9 @@ def test_the_stats_files(
         assert low <= min(o, c) and h >= max(o, c)
     quarter = json.loads((api / "chart-15m.json").read_text())
     assert quarter["step"] == 30 and len(quarter["points"]) >= 30
+    minute = json.loads((api / "chart-1m.json").read_text())
+    assert minute["step"] == 5 and len(minute["points"]) >= 12
+    assert minute["points"][-1][0] == now and minute["points"][0][0] >= now - 60
     richlist = json.loads((api / "richlist.json").read_text())
     assert richlist["ready"] and richlist["addresses"][0]["address"] == POOL_ADDRESS
 

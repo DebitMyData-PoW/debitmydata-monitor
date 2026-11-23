@@ -15,7 +15,8 @@
     // The Aurora design's colours (css/aurora.css).
     return { fore: dark ? "#8f8a9b" : "#6e6a78", grid: dark ? "#25222d" : "#f1eff4", tooltip: dark ? "dark" : "light",
       red: dark ? "#ff3348" : "#e0112b", gold: dark ? "#f0b429" : "#c99a06", green: dark ? "#22c55e" : "#16a34a",
-      zoom: dark ? "#6b6577" : "#a9a4b3" };	// the zoom bar: discreet, under the chart
+      zoom: dark ? "#6b6577" : "#a9a4b3",	// the zoom bar: discreet, under the chart
+      ring: dark ? "#15141a" : "#ffffff" };	// around the live dot: the card's colour
   };
 
   try {

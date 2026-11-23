@@ -158,6 +158,8 @@
         var logo = document.createElement("img");
         logo.className = "logo";
         logo.alt = "";
+        logo.width = 18;	// its size, even before the stylesheet arrives
+        logo.height = 18;
         logo.src = "/pools/" + encodeURIComponent(who.slug) + ".svg";
         logo.onerror = function () { logo.remove(); };
         name.appendChild(logo);
@@ -301,7 +303,16 @@
       if (high <= low) high = low + 1;
       return { min: low, max: high, tickAmount: high - low, labels: labels };
     }
-    if (min === undefined || !values.length) return { forceNiceScale: true, min: series.some(function (s) { return s.type === "bar"; }) ? 0 : undefined, labels: labels };
+    var anyBar = series.some(function (s) { return s.type === "bar"; });
+    // A flat line (often on 1M: no new block within a minute): an axis around it, not one label
+    if (values.length && !anyBar) {
+      var top = Math.max.apply(null, values), bottom = Math.min.apply(null, values);
+      if (top - bottom <= Math.abs(top) * 0.005) {
+        var half = Math.abs(top) * 0.1 || 1;
+        return { min: Math.max(0, bottom - half), max: top + half, tickAmount: 4, labels: labels };
+      }
+    }
+    if (min === undefined || !values.length) return { forceNiceScale: true, min: anyBar ? 0 : undefined, labels: labels };
     var lo = Math.min.apply(null, values), hi = Math.max.apply(null, values), pad = (hi - lo) * 0.08 || Math.abs(hi) * 0.05 || 1;
     var bars = series.some(function (s) { return s.type === "bar"; });
     return { min: bars ? 0 : Math.max(0, lo - pad), max: hi + pad, forceNiceScale: true, labels: labels };
@@ -321,7 +332,19 @@
   }
   function tooltipDate() {
     return state.range === "1y" || state.range === "all" ? { year: "numeric", month: "short", day: "numeric" }
+      : short() ? { hour: "2-digit", minute: "2-digit", second: "2-digit" }
       : { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" };
+  }
+  function short() { return state.range === "1m" || state.range === "15m"; }
+
+  // The newest point of a series: now (the live value), as {x, y}; a candle's close.
+  function lastPoint(s) {
+    for (var k = s.data.length - 1; k >= 0; k--) {
+      var p = s.data[k], x = Array.isArray(p) ? p[0] : p.x, y = Array.isArray(p) ? p[1] : p.y;
+      if (Array.isArray(y)) y = y[3];
+      if (y !== null && y !== undefined) return { x: x, y: y };
+    }
+    return null;
   }
 
   // ------------------------------------------------------------------ drawing
@@ -383,6 +406,14 @@
     }
     if (def.target) annotations.yaxis.push({ y: def.target, borderColor: c.green, strokeDashArray: 5,
       label: { text: "target", borderColor: "transparent", style: { background: "transparent", color: c.green } } });
+    // The live dot: a big red dot on the newest point (now), as on the Analytics site's Oracle
+    var live = series[0].type === "bar" ? null : lastPoint(series[0]);
+    if (live && (!zoom || (zoom.min <= live.x && zoom.max >= live.x))) {
+      annotations.points = [
+        { x: live.x, y: live.y, marker: { size: 13, fillColor: c.red, strokeWidth: 0, cssClass: "dmd-live-halo" } },
+        { x: live.x, y: live.y, marker: { size: 6.5, fillColor: c.red, strokeColor: c.ring, strokeWidth: 2, cssClass: "dmd-live-dot" } }
+      ];
+    }
     var types = series.map(function (s) { return s.type; });
     var phone = window.innerWidth < 760;
     var options = {
@@ -391,21 +422,21 @@
         background: "transparent" },
       series: series,
       colors: def.colours(c),
-      stroke: { width: types.map(function (t) { return t === "candlestick" ? 1 : t === "bar" ? 0 : 2.5; }), curve: "smooth",
+      stroke: { width: types.map(function (t) { return t === "candlestick" ? 1 : t === "bar" ? 0 : 1; }), curve: "smooth",
         colors: candles ? types.map(function (t, i) { return t === "candlestick" ? c.fore : def.colours(c)[i]; }) : undefined },
       fill: { type: types.map(function (t) { return t === "area" ? "gradient" : "solid"; }), gradient: { opacityFrom: 0.35, opacityTo: 0.02 },
         opacity: types.map(function (t) { return t === "bar" ? 0.85 : 1; }) },
       plotOptions: { candlestick: { colors: { upward: c.green, downward: c.red }, wick: { useFillColor: true } },
         bar: { columnWidth: "80%", borderRadius: 2 } },
       dataLabels: { enabled: false },
-      grid: { borderColor: c.grid, strokeDashArray: 3, padding: { left: 8, right: 12 } },
+      grid: { borderColor: c.grid, strokeDashArray: 3, padding: { left: 8, right: 22 } },	// room for the live dot
       legend: { show: false },
       markers: { size: 0, hover: { size: 4 } },
       xaxis: { type: "datetime", labels: { datetimeUTC: false }, axisBorder: { show: false }, axisTicks: { show: false },
         tooltip: { enabled: false }, min: zoom ? zoom.min : undefined, max: zoom ? zoom.max : undefined },
       yaxis: yaxisFor(def, series, zoom ? zoom.min : undefined, zoom ? zoom.max : undefined),
       tooltip: candles ? { theme: c.tooltip, shared: false, custom: candleTooltip(def, series) }
-        : { theme: c.tooltip, shared: true, intersect: false, x: { format: state.range === "1y" || state.range === "all" ? "MMM d, yyyy" : "MMM d, HH:mm" },
+        : { theme: c.tooltip, shared: true, intersect: false, x: { format: state.range === "1y" || state.range === "all" ? "MMM d, yyyy" : short() ? "HH:mm:ss" : "MMM d, HH:mm" },
           y: { formatter: function (v) { return def.format(v); } } },
       annotations: annotations,
       noData: { text: "No data for this period yet" }

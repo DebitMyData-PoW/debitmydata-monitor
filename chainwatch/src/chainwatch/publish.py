@@ -4,8 +4,8 @@ The stats page (stats.debitmydata.io) is static: nginx serves these files from t
 and Cloudflare caches them for a minute. The page's API (stats.debitmydata.io/api/) explains them.
 
   api/summary.json            the latest figures, with their changes over a day
-  api/chart-<range>.json      the chart points and candles of a range: 15m, 1h, 4h, 24h, 7d, 30d,
-                              1y, all (30d, 1y and all are written again every 10 minutes)
+  api/chart-<range>.json      the chart points and candles of a range: 1m, 15m, 1h, 4h, 24h, 7d,
+                              30d, 1y, all (30d, 1y and all are written again every 10 minutes)
   api/miners.json             who found the last day's, week's and month's blocks
   api/transfers.json          the large transfers of the last week
   api/richlist.json           the 100 addresses with the most DMD (the monitor's own count)
@@ -46,6 +46,7 @@ from chainwatch.sync import rich_list
 DAY = 86400
 RANGES = {
     # name: (span in seconds or None for everything, step, hashrate window)
+    "1m": (60, 5, 3600),
     "15m": (900, 30, 3600),
     "1h": (3600, 60, 3600),
     "4h": (4 * 3600, 300, 3600),
