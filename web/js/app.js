@@ -425,12 +425,16 @@
     }
     if (def.target) annotations.yaxis.push({ y: def.target, borderColor: c.green, strokeDashArray: 5,
       label: { text: "target", borderColor: "transparent", style: { background: "transparent", color: c.green } } });
-    // The live dot: a big red dot on the newest point (now), as on the Analytics site's Oracle
+    // The live dot: a big red dot on the newest point (now), as on the Analytics site's Oracle.
+    // It sits 1 ms before that point: ApexCharts drops a point annotation whose place works out
+    // past the chart's right edge, and the newest point's own time can, by rounding, come out a
+    // hair past it (at some chart widths, for any period). 1 ms is far less than a pixel.
     var live = series[0].type === "bar" ? null : lastPoint(series[0]);
     if (live && (!zoom || (zoom.min <= live.x && zoom.max >= live.x))) {
+      var dotX = live.x - 1;
       annotations.points = [
-        { x: live.x, y: live.y, marker: { size: 13, fillColor: c.red, strokeWidth: 0, cssClass: "dmd-live-halo" } },
-        { x: live.x, y: live.y, marker: { size: 6.5, fillColor: c.red, strokeColor: c.ring, strokeWidth: 2, cssClass: "dmd-live-dot" } }
+        { x: dotX, y: live.y, marker: { size: 13, fillColor: c.red, strokeWidth: 0, cssClass: "dmd-live-halo" } },
+        { x: dotX, y: live.y, marker: { size: 6.5, fillColor: c.red, strokeColor: c.ring, strokeWidth: 2, cssClass: "dmd-live-dot" } }
       ];
     }
     var types = series.map(function (s) { return s.type; });
