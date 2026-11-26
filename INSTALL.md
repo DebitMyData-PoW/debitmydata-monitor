@@ -191,6 +191,7 @@ image.
 | `DMDW_COINGECKO_ID`, `DMDW_COINGECKO_KEY` | | The exchanges' figures (below) |
 | `DMDW_PUSH_KEY_FILE` | `/var/lib/debitmydata-monitor/push/vapid.pem` | The notifications' key |
 | `DMDW_PUSH_MAX_DEVICES` | `20000` | Devices with notifications on, at most |
+| `DMDW_PUSH_ORIGINS` | `https://mydmd.io` | Other sites whose pages may turn notifications on here: the DMD Web Wallet, for its wallets' transactions. Commas; empty: none |
 
 **Exchanges.** Once the coin trades on an exchange that CoinGecko follows, put its CoinGecko id
 (the "API ID" on its CoinGecko page) in `DMDW_COINGECKO_ID`, and CoinGecko's free Demo key in

@@ -236,6 +236,8 @@ add_setting DMDW_LARGE_TRANSFER_DMD 1000 \
 add_setting DMDW_COINGECKO_ID "" \
     "Once DMD trades on an exchange: its id on CoinGecko (the trading volume and market price)"
 add_setting DMDW_COINGECKO_KEY "" "CoinGecko's free Demo API key, if you have one"
+add_setting DMDW_PUSH_ORIGINS https://mydmd.io \
+    "Other sites whose pages may turn notifications on here (the DMD Web Wallet). Commas; empty: none"
 chown root:dmdwatch "$ENV_FILE"
 chmod 640 "$ENV_FILE"
 # The chain watch's tables, and Grafana's read access to the history (not to the alerts)

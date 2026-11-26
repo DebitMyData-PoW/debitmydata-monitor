@@ -40,6 +40,14 @@ What a device can choose (prefs; None or false: off):
   richlist        an address of the rich list's top 10 sent or received this many DMD or more in
                   a transaction (its mining rewards left out)
 
+The DMD Web Wallet (mydmd.io, DMDW_PUSH_ORIGINS) turns them on for its wallets: a device with
+prefs {"app": "wallet", "wallets": [{"id", "addresses"}]} (up to 10 wallets, 150 addresses each:
+the addresses it used and the next ones it will use). It gets only its wallets' transactions,
+once they are in a block, one notice per transaction (more than 3 at once: one notice), with the
+figures in the notice ("wallet": kind, wallet, txid, height, net, reward) so that the wallet
+writes it in its user's language. Nothing it was told is kept here (no "sent" list), and its
+addresses are only compared with the blocks' transactions.
+
 A change "since the last notice" is measured from the value the device was last told about (or
 had when it chose that figure), so a slow drift is told once it adds up.
 
@@ -74,6 +82,10 @@ log = logging.getLogger(__name__)
 
 MAX_POOLS = 10
 MAX_ADDRESSES = 10
+WALLET_APP = "wallet"
+MAX_WALLETS = 10
+MAX_WALLET_ADDRESSES = 150
+WALLET_SUMMARY_AFTER = 3  # more transactions of one wallet in one run: one notice for them
 MAX_PRICE_TARGETS = 5
 DIRECTIONS = ("both", "up", "down")
 DIRECTED = ("hashrate", "difficulty", "price")  # the figures with a direction to choose
@@ -120,6 +132,7 @@ RANGES: dict[str, tuple[float, float]] = {
 }
 POOL_RANGES = {"hashrate": (1, 1000), "silence": (1, 168)}
 ADDRESS = re.compile(r"^(dm1[02-9ac-hj-np-z]{6,87}|[1-9A-HJ-NP-Za-km-z]{25,40})$")
+WALLET_ID = re.compile(r"^[0-9a-f]{8,32}$")
 
 
 # --------------------------------------------------------------------------- the choices
@@ -145,6 +158,8 @@ def clean_prefs(
     message for the page) when something cannot be taken."""
     if not isinstance(raw, dict):
         raise ValueError("the choices are missing")
+    if raw.get("app") == WALLET_APP:
+        return clean_wallet_prefs(raw)
     prefs = copy.deepcopy(DEFAULT_PREFS)
     for name in FLAGS:
         if name in raw:
@@ -203,6 +218,40 @@ def clean_prefs(
             seen.append(text)
     prefs["addresses"] = seen
     return prefs
+
+
+def clean_wallet_prefs(raw: dict[str, Any]) -> dict[str, Any]:
+    """The DMD Web Wallet's choices: its wallets, each an id it made and the addresses to follow.
+    The addresses come from the wallet's own keys: their form is checked, not each one with the
+    node (a wallet sends up to 1,500)."""
+    wallets = raw.get("wallets") or []
+    if not isinstance(wallets, list) or len(wallets) > MAX_WALLETS:
+        raise ValueError(f"wallets: {MAX_WALLETS} at most")
+    out: list[dict[str, Any]] = []
+    for wallet in wallets:
+        if not isinstance(wallet, dict):
+            raise ValueError("wallets: an id and its addresses")
+        wallet_id = str(wallet.get("id") or "")
+        if not WALLET_ID.fullmatch(wallet_id):
+            raise ValueError("wallets: an id of 8 to 32 hexadecimal characters")
+        if any(w["id"] == wallet_id for w in out):
+            raise ValueError("wallets: each id once")
+        addresses = wallet.get("addresses") or []
+        if not isinstance(addresses, list) or not 0 < len(addresses) <= MAX_WALLET_ADDRESSES:
+            raise ValueError(f"wallets: 1 to {MAX_WALLET_ADDRESSES} addresses each")
+        seen: list[str] = []
+        for address in addresses:
+            text = str(address).strip()
+            if not ADDRESS.fullmatch(text):
+                raise ValueError(f"{text[:60]} is not a DMD address")
+            if text not in seen:
+                seen.append(text)
+        out.append({"id": wallet_id, "addresses": seen})
+    return {"app": WALLET_APP, "wallets": out}
+
+
+def is_wallet(device: dict[str, Any]) -> bool:
+    return (device.get("prefs") or {}).get("app") == WALLET_APP
 
 
 # --------------------------------------------------------------------------- formats
@@ -410,6 +459,98 @@ def _address_notice(address: str, rows: list[dict[str, Any]], tx_url: str) -> di
     )
 
 
+def _wallet_notice(t: dict[str, Any]) -> dict[str, Any]:
+    """One transaction of a wallet: an English notice, and its figures for the wallet."""
+    net, where = int(t["net"]), f"In block {_height(int(t['height']))}."
+    if t["reward"]:
+        title = f"Mining reward: {_dmd(net)}"
+    elif net > 0:
+        title = f"Received {_dmd(net)}"
+    elif net < 0:
+        title = f"Sent {_dmd(-net)}"
+    else:
+        title = "DMD moved in your wallet"
+    notice = _notice(title, where, "/", "tx-" + str(t["txid"])[:24])
+    notice["wallet"] = {
+        "kind": "tx",
+        "wallet": t["wallet"],
+        "txid": t["txid"],
+        "height": int(t["height"]),
+        "net": net,
+        "reward": bool(t["reward"]),
+    }
+    return notice
+
+
+def _wallet_summary(wallet_id: str, rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Several transactions of one wallet at once: one notice, with their total."""
+    net = sum(int(t["net"]) for t in rows)
+    heights = sorted({int(t["height"]) for t in rows})
+    sign = "+" if net > 0 else "−" if net < 0 else ""
+    notice = _notice(
+        f"{len(rows)} transactions: {sign}{_dmd(abs(net))}",
+        f"In blocks {_height(heights[0])}–{_height(heights[-1])}."
+        if len(heights) > 1
+        else f"In block {_height(heights[0])}.",
+        "/",
+        "wallet-" + wallet_id[:16],
+    )
+    notice["wallet"] = {
+        "kind": "many",
+        "wallet": wallet_id,
+        "count": len(rows),
+        "net": net,
+        "height": heights[-1],
+    }
+    return notice
+
+
+def collect_wallet(
+    device: dict[str, Any], events: list[dict[str, Any]]
+) -> tuple[list[dict[str, Any]], dict[str, Any], int]:
+    """What a DMD Web Wallet device should be told: its wallets' transactions since its cursor,
+    each with what it did to the wallet (received, or sent with the fee: the change left out)."""
+    cursor = int(device["event_cursor"])
+    mine = [e for e in events if e["id"] > cursor]
+    if mine:
+        cursor = max(e["id"] for e in mine)
+    owner = {
+        address: wallet["id"]
+        for wallet in (device["prefs"] or {}).get("wallets") or []
+        for address in wallet["addresses"]
+    }
+    txs: dict[tuple[str, str], dict[str, Any]] = {}
+    for e in mine:
+        if e["kind"] != "address":
+            continue
+        d = e["data"]
+        wallet_id = owner.get(d["address"])
+        if wallet_id is None:
+            continue
+        t = txs.setdefault(
+            (wallet_id, d["txid"]),
+            {
+                "wallet": wallet_id,
+                "txid": d["txid"],
+                "height": d["height"],
+                "net": 0,
+                "reward": False,
+            },
+        )
+        t["net"] += int(d["received"]) - int(d["sent"])
+        t["reward"] = t["reward"] or bool(d.get("reward"))
+    by_wallet: dict[str, list[dict[str, Any]]] = {}
+    for t in txs.values():
+        by_wallet.setdefault(t["wallet"], []).append(t)
+    out: list[dict[str, Any]] = []
+    for wallet_id, rows in by_wallet.items():
+        if len(rows) > WALLET_SUMMARY_AFTER:
+            out.append(_wallet_summary(wallet_id, rows))
+        else:
+            out += [_wallet_notice(t) for t in rows]
+    return out[:MAX_NOTICES], copy.deepcopy(device["memory"] or {}), cursor
+
+
 def _threshold(
     memory: dict[str, Any],
     key: str,
@@ -525,6 +666,8 @@ def collect(
     settings: Settings,
 ) -> tuple[list[dict[str, Any]], dict[str, Any], int]:
     """What this device should be told now: the notices, its new memory and event cursor."""
+    if is_wallet(device):
+        return collect_wallet(device, events)
     prefs = {**DEFAULT_PREFS, **(device["prefs"] or {})}
     memory: dict[str, Any] = copy.deepcopy(device["memory"] or {})
     cursor = int(device["event_cursor"])
@@ -835,8 +978,13 @@ def latest_event(conn: psycopg.Connection[Any]) -> int:
 
 
 def watched_addresses(conn: psycopg.Connection[Any]) -> frozenset[str]:
+    """The addresses some device follows: the stats page's and the wallets'."""
     rows = conn.execute(
-        "SELECT DISTINCT jsonb_array_elements_text(prefs->'addresses') AS a FROM push_devices"
+        "SELECT jsonb_array_elements_text(prefs->'addresses') AS a FROM push_devices "
+        "WHERE jsonb_typeof(prefs->'addresses') = 'array' "
+        "UNION SELECT jsonb_array_elements_text(w->'addresses') AS a FROM push_devices, "
+        "jsonb_array_elements(CASE WHEN jsonb_typeof(prefs->'wallets') = 'array' "
+        "THEN prefs->'wallets' ELSE '[]'::jsonb END) AS w"
     ).fetchall()
     return frozenset(r["a"] for r in rows)
 
@@ -896,9 +1044,10 @@ class Notifier:
         for device in devices:
             messages, memory, cursor = collect(device, events, figs, self.settings)
             if device["test_at"] is not None:
-                messages.insert(
-                    0, _notice("Test notice", "Notifications work on this device.", "/", "test")
-                )
+                test = _notice("Test notice", "Notifications work on this device.", "/", "test")
+                if is_wallet(device):
+                    test["wallet"] = {"kind": "test"}
+                messages.insert(0, test)
             stamp = int(now.timestamp())
             for n, m in enumerate(messages):
                 m["id"] = f"{stamp}-{device['id']}-{n}"
@@ -925,14 +1074,18 @@ class Notifier:
                 )
                 continue
             sent += len(messages)
-            items = inbox(
-                (device["sent"] or [])
-                + [
-                    {k: m[k] for k in ("id", "time", "title", "body", "url")}
-                    for m in messages
-                    if m.get("tag") != "test"
-                ],
-                now,
+            items = (
+                []
+                if is_wallet(device)
+                else inbox(
+                    (device["sent"] or [])
+                    + [
+                        {k: m[k] for k in ("id", "time", "title", "body", "url")}
+                        for m in messages
+                        if m.get("tag") != "test"
+                    ],
+                    now,
+                )
             )
             if (
                 messages

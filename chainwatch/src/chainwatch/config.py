@@ -83,6 +83,8 @@ class Settings:
     push_subject: str = "https://stats.debitmydata.io"
     push_listen: str = "127.0.0.1:8471"
     push_max_devices: int = 20_000
+    # other sites whose pages may turn notifications on here (the DMD Web Wallet)
+    push_origins: list[str] = field(default_factory=lambda: ["https://mydmd.io"])
     explorer_tx_url: str = "https://mempool.debitmydata.io/tx/"
     # the rich list's top addresses, watched for the team's alerts (0: not watched)
     watch_richlist: int = 10
@@ -147,6 +149,9 @@ class Settings:
             or _env("DMDW_SITE_URL", "https://stats.debitmydata.io").rstrip("/"),
             push_listen=_env("DMDW_PUSH_LISTEN", "127.0.0.1:8471"),
             push_max_devices=int(_share("DMDW_PUSH_MAX_DEVICES", "20000")),
+            push_origins=[o.rstrip("/") for o in _list("DMDW_PUSH_ORIGINS")]
+            if "DMDW_PUSH_ORIGINS" in os.environ
+            else ["https://mydmd.io"],
             explorer_tx_url=_env("DMDW_EXPLORER_TX_URL", "https://mempool.debitmydata.io/tx/"),
             watch_richlist=int(_env("DMDW_WATCH_RICHLIST", "10") or 0)
             if _env("DMDW_WATCH_RICHLIST", "10").isdigit()

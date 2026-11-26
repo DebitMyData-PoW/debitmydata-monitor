@@ -75,6 +75,12 @@ The monitor keeps each device's choices with its browser's push subscription, an
 no account, no email, no IP address. Turning notifications off on the device removes both. Every
 notice is encrypted for its device.
 
+The same service sends the **DMD Web Wallet's** notifications ([mydmd.io](https://mydmd.io)): when
+a wallet's user turns them on, the wallet gives it its wallets' addresses (the ones it used and the
+next ones), and each transaction to or from them comes as a notice once it is in a block, even
+when the wallet is closed. The wallet writes the notice in its user's language; the monitor keeps
+none of them. The sites allowed to do this are in `DMDW_PUSH_ORIGINS`.
+
 ## The figures
 
 - **Reference price**: the DebitMyData Agent Gateway's, recorded every 5 minutes since October

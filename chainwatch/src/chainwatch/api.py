@@ -1,4 +1,5 @@
-"""/push: where the stats page turns a device's notifications on, changes or reads them.
+"""/push: where the stats page turns a device's notifications on, changes or reads them, and the
+DMD Web Wallet its wallets' (from the sites in DMDW_PUSH_ORIGINS: mydmd.io; notify.py).
 
 A small HTTP server on this server only (DMDW_PUSH_LISTEN, 127.0.0.1:8471); nginx passes it
 stats.debitmydata.io/push, with a limit on requests per visitor.
@@ -12,6 +13,9 @@ stats.debitmydata.io/push, with a limit on requests per visitor.
      unsubscribe  {endpoint}          turns them off (the row goes)
      test         {endpoint}          a test notice, within seconds (one per 10 seconds)
      renew        {old, subscription} the browser replaced the subscription (service worker)
+
+Pages of the stats site and of DMDW_PUSH_ORIGINS may call it (CORS: those origins only, no
+cookies); a request from any other page is refused.
 
 A device is known by its subscription's endpoint (the push service's address for it), which
 only that browser has. Only the browsers' push services are taken as endpoints (push.py).
@@ -36,7 +40,7 @@ from chainwatch.rpc import Rpc, RpcError, RpcUnavailable
 
 log = logging.getLogger(__name__)
 
-MAX_BODY = 16 * 1024
+MAX_BODY = 64 * 1024  # a wallet's addresses: up to 10 wallets, 150 each
 TEST_EVERY = timedelta(seconds=10)
 
 
@@ -66,7 +70,14 @@ class PushApi:
             "transfer_floor_dmd": float(self.settings.large_transfer_dmd),
             "max_pools": notify.MAX_POOLS,
             "max_addresses": notify.MAX_ADDRESSES,
+            "max_wallets": notify.MAX_WALLETS,
+            "max_wallet_addresses": notify.MAX_WALLET_ADDRESSES,
         }
+
+    def origins(self) -> set[str]:
+        """The pages allowed to call /push: the stats site's, and DMDW_PUSH_ORIGINS."""
+        site = urlsplit(self.settings.site_url)
+        return {f"{site.scheme}://{site.netloc}", *self.settings.push_origins}
 
     def valid_address(self, address: str) -> bool:
         """The node says whether it is a DMD address; when it cannot answer, its form is enough."""
@@ -110,6 +121,8 @@ class PushApi:
     def _answer(self, row: dict[str, Any] | None, now: datetime) -> dict[str, Any]:
         if row is None:
             return {"on": False, "prefs": notify.DEFAULT_PREFS, "items": []}
+        if notify.is_wallet(row):
+            return {"on": True, "prefs": row["prefs"], "items": []}
         return {
             "on": True,
             "prefs": {**notify.DEFAULT_PREFS, **row["prefs"]},
@@ -208,14 +221,36 @@ class Handler(BaseHTTPRequestHandler):
     server_version = "dmd-push"
     sys_version = ""
 
+    def _cors(self) -> None:
+        """Another allowed site's page (the DMD Web Wallet) may read the answer."""
+        origin = self.headers.get("Origin")
+        if origin and origin in self.api.origins():
+            self.send_header("Access-Control-Allow-Origin", origin)
+            self.send_header("Vary", "Origin")
+
     def _send(self, status: int, data: dict[str, Any]) -> None:
         body = json.dumps(data, separators=(",", ":")).encode()
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
+        self._cors()
         self.end_headers()
         self.wfile.write(body)
+
+    def do_OPTIONS(self) -> None:
+        """The browser's question before another site's page posts JSON here."""
+        origin = self.headers.get("Origin")
+        if urlsplit(self.path).path != "/push" or not origin or origin not in self.api.origins():
+            self._send(403, {"error": "Not allowed."})
+            return
+        self.send_response(204)
+        self._cors()
+        self.send_header("Access-Control-Allow-Methods", "GET, POST")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.send_header("Access-Control-Max-Age", "86400")
+        self.send_header("Content-Length", "0")
+        self.end_headers()
 
     def do_GET(self) -> None:
         if urlsplit(self.path).path != "/push":
@@ -228,9 +263,8 @@ class Handler(BaseHTTPRequestHandler):
             self._send(404, {"error": "Not found."})
             return
         origin = self.headers.get("Origin")
-        site = urlsplit(self.api.settings.site_url)
-        if origin and origin != f"{site.scheme}://{site.netloc}":
-            self._send(403, {"error": "Only the stats page can do this."})
+        if origin and origin not in self.api.origins():
+            self._send(403, {"error": "Only the stats page and the DMD Web Wallet can do this."})
             return
         try:
             length = int(self.headers.get("Content-Length") or 0)
